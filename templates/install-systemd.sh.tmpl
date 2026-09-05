@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# agent-compose {{.RoleLabel}} node installer (systemd).
+# Installs ONE fixed systemd unit for the node, then enables + starts it.
+# Credentials are persisted once into a private state dir; they are NOT baked
+# into the unit or an env file. Run as root (or via sudo).
+#
+# Usage:
+#   AGENT_COMPOSE_NODE_ID=<node_id> AGENT_COMPOSE_NODE_SECRET=<secret> \
+#     sudo -E bash <(curl -fsSL {{.ScriptURL}})
+set -euo pipefail
+
+SERVER_URL="{{.ServerURL}}"
+NODE_ID="${AGENT_COMPOSE_NODE_ID:-}"
+NODE_SECRET="${AGENT_COMPOSE_NODE_SECRET:-}"
+
+if [ -z "$NODE_ID" ] || [ -z "$NODE_SECRET" ]; then
+  echo "error: AGENT_COMPOSE_NODE_ID and AGENT_COMPOSE_NODE_SECRET are required" >&2
+  exit 1
+fi
+
+# The agent binary is not downloaded by this script. Obtain {{.BinaryName}}
+# for linux/<arch> from the download address your management console provides
+# and place it at /usr/local/bin/{{.BinaryName}}.
+binary="/usr/local/bin/{{.BinaryName}}"
+if [ ! -x "$binary" ]; then
+  echo "error: agent binary not found at $binary" >&2
+  echo "       download it from the address provided by your management console," >&2
+  echo "       then: install -m 0755 ./{{.BinaryName}} $binary" >&2
+  exit 1
+fi
+
+# A dedicated low-privilege user limits blast radius for the no-isolation
+# (local process) execution form. Every role uses the same fixed user/unit so the
+# whole host still has exactly one manually installed node.
+svc="agent-compose-node"
+existing=0
+for oldsvc in agent-compose-node agent-compose-execution agent-compose-management; do
+  systemctl is-enabled "$oldsvc.service" >/dev/null 2>&1 && existing=1 || true
+  systemctl is-active "$oldsvc.service" >/dev/null 2>&1 && existing=1 || true
+done
+if [ "$existing" = 1 ] && [ "${AGENT_COMPOSE_NODE_REPLACE:-}" != "1" ]; then
+  if [ -r /dev/tty ]; then
+    printf "An Agent Compose node service already exists. Replace its local node data? [y/N]: " >/dev/tty
+    IFS= read -r answer </dev/tty || true
+    case "${answer:-}" in y|Y|yes|YES) ;; *) echo "cancelled; existing service was left unchanged"; exit 0 ;; esac
+  else
+    echo "error: existing node service found; set AGENT_COMPOSE_NODE_REPLACE=1 for an approved non-interactive replacement" >&2
+    exit 1
+  fi
+fi
+for oldsvc in agent-compose-node agent-compose-execution agent-compose-management; do
+  systemctl stop "$oldsvc.service" >/dev/null 2>&1 || true
+  if [ "$oldsvc" != "$svc" ]; then
+    systemctl disable "$oldsvc.service" >/dev/null 2>&1 || true
+  fi
+done
+if ! id "$svc" >/dev/null 2>&1; then
+  useradd --system --home /var/lib/"$svc" --create-home --shell /usr/sbin/nologin "$svc" || true
+fi
+
+# Fixed private state dir: holds the persisted config (0600) + host lock. The
+# unit points at it explicitly so it does not depend on the service user's HOME.
+statedir="/var/lib/$svc/node"
+mkdir -p "$statedir"
+chown "$svc" "/var/lib/$svc" "$statedir" 2>/dev/null || true
+
+as_user() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$svc" -- "$@"
+  else
+    sudo -u "$svc" "$@"
+  fi
+}
+
+# Persist the single credential set as the service user, into the fixed state
+# dir. --install-only saves the config and exits; --yes approves replacing an
+# older local node without a prompt (this is a root-run automation).
+echo "saving node configuration..."
+as_user env AGENT_COMPOSE_NODE_STATE_DIR="$statedir" "$binary" \
+  --install --install-only --yes \
+  --server "$SERVER_URL" --node-id "$NODE_ID" --secret "$NODE_SECRET"
+
+# One fixed unit. ExecStart carries no credentials; the node reads them from the
+# state dir. Reinstalling overwrites this same unit.
+cat > /etc/systemd/system/$svc.service <<EOF
+[Unit]
+Description=agent-compose {{.RoleLabel}} node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=AGENT_COMPOSE_NODE_STATE_DIR=$statedir
+ExecStart=$binary
+Restart=always
+RestartSec=5
+User=$svc
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now $svc.service
+echo "{{.BinaryName}} installed and started (systemctl status $svc)"

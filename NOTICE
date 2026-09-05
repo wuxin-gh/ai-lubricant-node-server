@@ -1,0 +1,34 @@
+# Provenance and attribution
+
+This repository contains AGPL-3.0-licensed derivative works of the following
+upstream projects, both public and both licensed under the GNU Affero General
+Public License v3.0:
+
+## chaitin/agent-compose
+Upstream: https://github.com/chaitin/agent-compose
+
+- `node_server/` — a Python port of the agent-compose node-control daemon
+  (`pkg/agentcompose/api`, `pkg/storage/configstore/node_store.go`,
+  `pkg/model/node_model.go`, `pkg/nodes/registry.go`, `pkg/auth/secretstore`,
+  `pkg/nodescripts`, `pkg/agentcompose/api/*.go` stream handlers).
+- `node_server/proto/agentcompose_v2.proto`,
+  `node_server/agentcompose_v2_pb2.py` — the agentcompose v2 protocol schema
+  and generated Python bindings.
+- `nodes/` — an independent Go module whose `common/proto/agentcompose/v2`
+  bindings are generated from that schema.
+
+## chaitin/MonkeyCode
+Upstream: https://github.com/chaitin/MonkeyCode
+
+- `user-frontend/` — the MonkeyCode frontend, vendored as the C-side user
+  portal (package upstream name: `monkeycode-ai`).
+
+## Modifications
+
+All files have been modified from their upstream forms: the Python port was
+rewritten for this project's data-service split topology (NDJSON follow
+streams, self-contained shared-store access, mobile-download pipeline), and
+the frontend was rebranded and integrated against a compatible API surface.
+
+Corresponding source for any distributed or network-served build of this
+repository is this repository itself.

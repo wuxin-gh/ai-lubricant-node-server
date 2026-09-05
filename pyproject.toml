@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-lubricant-node-server"
+version = "0.1.0"
+description = "Node control plane (node_server) — Python port of chaitin/agent-compose, AGPL-3.0"
+requires-python = ">=3.11"
+
+# The repo root IS the node_server package (flat layout: the package sits at
+# the repository top level so ai-lubricant can mount it as a submodule at its
+# original path node_server/, and `python -m node_server` resolves from both
+# ai-lubricant cwd and a plain site-packages install).
+[tool.setuptools]
+packages = ["node_server"]
+py-modules = ["dotenv_loader"]
+[tool.setuptools.package-dir]
+node_server = "."
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

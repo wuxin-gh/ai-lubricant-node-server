@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# agent-compose {{.RoleLabel}} node installer (docker-compose).
+# Builds the node image LOCALLY on this host from the two role binaries plus the
+# Dockerfile this service serves — nothing is pulled from a public registry. The
+# same image is reused for the child execution nodes a management node launches.
+#
+# Writes ONE fixed compose project and brings the node up. A later start needs:
+#   ( cd ~/.agent-compose/compose && docker compose up -d )
+#
+# Usage:
+#   AGENT_COMPOSE_NODE_ID=<node_id> AGENT_COMPOSE_NODE_SECRET=<secret> \
+#     bash <(curl -fsSL {{.ScriptURL}})
+set -euo pipefail
+
+SERVER_URL="{{.ServerURL}}"
+NODE_ROLE="{{.Role}}"
+IMAGE="${AGENT_COMPOSE_AGENT_IMAGE:-{{.AgentImage}}}"
+: "${IMAGE:=ai-lubricant-node:local}"
+NODE_ID="${AGENT_COMPOSE_NODE_ID:-}"
+NODE_SECRET="${AGENT_COMPOSE_NODE_SECRET:-}"
+DIR="${AGENT_COMPOSE_NODE_DIR:-$HOME/.agent-compose/compose}"
+# Where the binaries / Dockerfile are fetched from. Defaults to the server that
+# handed out this script; override when the public download origin differs.
+DOWNLOAD_BASE="${AGENT_COMPOSE_DOWNLOAD_BASE:-$SERVER_URL}"
+
+if [ -z "$NODE_ID" ] || [ -z "$NODE_SECRET" ]; then
+  echo "error: AGENT_COMPOSE_NODE_ID and AGENT_COMPOSE_NODE_SECRET are required" >&2
+  exit 1
+fi
+if ! command -v docker >/dev/null 2>&1; then
+  echo "error: docker is required for the docker-compose install method" >&2
+  exit 1
+fi
+
+# ── build the node image locally (once per host) ───────────────────────────────
+# Both role binaries land in one image; the entrypoint picks which to exec from
+# AGENT_COMPOSE_NODE_ROLE. Skipped when the image already exists.
+if [ "${AGENT_COMPOSE_NODE_REBUILD:-}" = "1" ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  if [ -z "$DOWNLOAD_BASE" ]; then
+    echo "error: cannot build the node image: no download base (set AGENT_COMPOSE_DOWNLOAD_BASE)" >&2
+    exit 1
+  fi
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) echo "error: unsupported arch '$arch' for the node image" >&2; exit 1 ;;
+  esac
+
+  build_dir="$(mktemp -d)"
+  trap 'rm -rf "$build_dir"' EXIT
+
+  echo "downloading node binaries (linux/$arch) ..."
+  curl -fsSL "$DOWNLOAD_BASE/api/v1/public/nodes/binaries/node-execution-linux-$arch" \
+    -o "$build_dir/node-execution"
+  curl -fsSL "$DOWNLOAD_BASE/api/v1/public/nodes/binaries/agent-compose-node-management-linux-$arch" \
+    -o "$build_dir/agent-compose-node-management"
+  curl -fsSL "$DOWNLOAD_BASE/api/v1/public/nodes/docker/Dockerfile" -o "$build_dir/Dockerfile"
+  curl -fsSL "$DOWNLOAD_BASE/api/v1/public/nodes/docker/entrypoint.sh" -o "$build_dir/entrypoint.sh"
+
+  echo "building node image $IMAGE ..."
+  docker build -t "$IMAGE" "$build_dir"
+else
+  echo "node image $IMAGE already present; skipping build (AGENT_COMPOSE_NODE_REBUILD=1 to force)"
+fi
+
+if [ -f "$DIR/.env" ]; then
+  if [ "${AGENT_COMPOSE_NODE_REPLACE:-}" != "1" ]; then
+    if [ -r /dev/tty ]; then
+      printf "A node compose project already exists in %s. Replace it? [y/N]: " "$DIR" >/dev/tty
+      IFS= read -r answer </dev/tty || true
+      case "${answer:-}" in y|Y|yes|YES) ;; *) echo "cancelled; existing project was left unchanged"; exit 0 ;; esac
+    else
+      echo "error: existing node compose project found; set AGENT_COMPOSE_NODE_REPLACE=1 for an approved non-interactive replacement" >&2
+      exit 1
+    fi
+  fi
+  ( cd "$DIR" && docker compose down >/dev/null 2>&1 ) || true
+fi
+
+mkdir -p "$DIR"
+umask 077
+# AGENT_COMPOSE_AGENT_IMAGE serves double duty: it selects the image for this
+# container AND tells a management node which image to launch its children from,
+# so the locally-built image is reused instead of pulled.
+cat > "$DIR/.env" <<EOF
+AGENT_COMPOSE_SERVER=$SERVER_URL
+AGENT_COMPOSE_NODE_ID=$NODE_ID
+AGENT_COMPOSE_NODE_SECRET=$NODE_SECRET
+AGENT_COMPOSE_NODE_ROLE=$NODE_ROLE
+AGENT_COMPOSE_AGENT_IMAGE=$IMAGE
+EOF
+
+cat > "$DIR/docker-compose.yml" <<'EOF'
+services:
+  agent-compose-node:
+    image: ${AGENT_COMPOSE_AGENT_IMAGE}
+    container_name: agent-compose-node
+    restart: always
+    env_file:
+      - ./.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+EOF
+
+( cd "$DIR" && docker compose up -d )
+echo "agent-compose {{.RoleLabel}} node started via docker compose in $DIR"
+echo "future starts: ( cd $DIR && docker compose up -d )"

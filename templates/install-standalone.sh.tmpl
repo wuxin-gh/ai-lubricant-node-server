@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# agent-compose {{.RoleLabel}} node installer (standalone).
+# Persists the node credential once and installs ONE fixed, secret-free launcher.
+# Later starts require no flags: run $HOME/.agent-compose/start-node.sh.
+#
+# Usage:
+#   AGENT_COMPOSE_NODE_ID=<node_id> AGENT_COMPOSE_NODE_SECRET=<secret> \
+#     bash <(curl -fsSL {{.ScriptURL}})
+set -euo pipefail
+
+SERVER_URL="{{.ServerURL}}"
+NODE_ID="${AGENT_COMPOSE_NODE_ID:-}"
+NODE_SECRET="${AGENT_COMPOSE_NODE_SECRET:-}"
+
+if [ -z "$NODE_ID" ] || [ -z "$NODE_SECRET" ]; then
+  echo "error: AGENT_COMPOSE_NODE_ID and AGENT_COMPOSE_NODE_SECRET are required" >&2
+  exit 1
+fi
+
+bindir="${AGENT_COMPOSE_NODE_BIN_DIR:-$HOME/.agent-compose/bin}"
+root="${AGENT_COMPOSE_NODE_HOME:-$HOME/.agent-compose}"
+binary="$bindir/{{.BinaryName}}"
+launcher="$root/start-node.sh"
+
+# The agent binary is not downloaded by this script. Obtain the correct
+# {{.BinaryName}} build for this host's OS/arch from the download address
+# your management console provides, then place it at the path below.
+if [ ! -x "$binary" ]; then
+  echo "error: agent binary not found at $binary" >&2
+  echo "       download {{.BinaryName}} for this platform from the address" >&2
+  echo "       provided by your management console and place it there, e.g.:" >&2
+  echo "         mkdir -p \"$bindir\" && cp ./{{.BinaryName}} \"$binary\" && chmod +x \"$binary\"" >&2
+  exit 1
+fi
+
+mkdir -p "$root"
+umask 077
+
+# Save the credential and exit. If another local node is installed, the Go
+# installer prompts before replacing it; a cancelled prompt leaves it untouched.
+"$binary" --install --install-only \
+  --server "$SERVER_URL" \
+  --node-id "$NODE_ID" \
+  --secret "$NODE_SECRET"
+
+# One fixed launcher containing no secret. Reinstalling a different role replaces
+# this file, so the host still has just one manual node entry.
+cat > "$launcher" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$binary"
+EOF
+chmod +x "$launcher"
+
+echo "starting {{.RoleLabel}} node against $SERVER_URL"
+echo "future starts: $launcher"
+exec "$launcher"

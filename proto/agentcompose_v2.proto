@@ -1,0 +1,3402 @@
+syntax = "proto3";
+
+package agentcompose.v2;
+
+option go_package = "ai-lubricant-nodes/common/proto/agentcompose/v2;agentcomposev2";
+
+service ProjectService {
+  rpc ValidateProject(ValidateProjectRequest) returns (ValidateProjectResponse);
+  rpc ApplyProject(ApplyProjectRequest) returns (ApplyProjectResponse);
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
+  rpc WatchProject(WatchProjectRequest) returns (stream WatchProjectResponse);
+}
+
+service RunService {
+  rpc RunAgent(RunAgentRequest) returns (RunAgentResponse);
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+  // Stable server-stream projection of RunAgent for non-interactive stream views.
+  // Interactive clients that need stdin, resize, signal, or multi-turn prompt
+  // attachment should use RunAttach.
+  rpc RunAgentStream(RunAgentRequest) returns (stream RunAgentStreamResponse);
+  rpc RunAttach(stream RunAttachRequest) returns (stream RunAttachResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc FollowRunLogs(FollowRunLogsRequest) returns (stream RunLogChunk);
+  rpc StopRun(StopRunRequest) returns (StopRunResponse);
+}
+
+service ExecService {
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  // Stable server-stream projection of Exec for non-interactive stream views.
+  // Interactive clients that need stdin, resize, or signal attachment should use
+  // ExecAttach.
+  rpc ExecStream(ExecRequest) returns (stream ExecStreamResponse);
+  rpc ExecAttach(stream ExecAttachRequest) returns (stream ExecAttachResponse);
+}
+
+service ImageService {
+  rpc ListImages(ListImagesRequest) returns (ListImagesResponse);
+  rpc PullImage(PullImageRequest) returns (PullImageResponse);
+  rpc InspectImage(InspectImageRequest) returns (InspectImageResponse);
+  rpc RemoveImage(RemoveImageRequest) returns (RemoveImageResponse);
+  rpc BuildImage(BuildImageRequest) returns (stream BuildImageEvent);
+}
+
+service CacheService {
+  rpc ListCaches(ListCachesRequest) returns (ListCachesResponse);
+  rpc InspectCache(InspectCacheRequest) returns (InspectCacheResponse);
+  rpc PruneCaches(PruneCachesRequest) returns (PruneCachesResponse);
+  rpc RemoveCache(RemoveCacheRequest) returns (RemoveCacheResponse);
+}
+
+service VolumeService {
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+  rpc InspectVolume(InspectVolumeRequest) returns (InspectVolumeResponse);
+  rpc RemoveVolume(RemoveVolumeRequest) returns (RemoveVolumeResponse);
+  rpc PruneVolumes(PruneVolumesRequest) returns (PruneVolumesResponse);
+}
+
+service SandboxService {
+  rpc RemoveSandbox(RemoveSandboxRequest) returns (RemoveSandboxResponse);
+  rpc GetSandboxStats(GetSandboxStatsRequest) returns (GetSandboxStatsResponse);
+}
+
+// NodeService is the control plane for distributed execution nodes. An
+// execution node dials the server outbound and holds a single long-lived
+// bidirectional stream (NodeConnect): the node sends registration, heartbeats,
+// session output, and results; the server pushes session commands
+// (create/delete/list) back down the same stream. This inverts the connection
+// direction so nodes can live behind NAT/firewalls and come online on demand.
+//
+// The unary RPCs (ListNodes/ApproveNode/RevokeNode) are the management-plane
+// surface consumed by management nodes; they are independent of the execution
+// stream.
+service NodeService {
+  // NodeConnect is the node's single outbound long-lived stream. The node is
+  // the dialer; the server reverse-dispatches session commands over it.
+  rpc NodeConnect(stream NodeUpstreamFrame) returns (stream NodeDownstreamFrame);
+
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc GetPublicIPLookupConfig(GetPublicIPLookupConfigRequest) returns (NodePublicIPLookupConfig);
+  rpc UpdatePublicIPLookupConfig(UpdatePublicIPLookupConfigRequest) returns (NodePublicIPLookupConfig);
+  rpc GetNodeProxyConfig(GetNodeProxyConfigRequest) returns (NodeProxyConfig);
+  rpc UpdateNodeProxyConfig(UpdateNodeProxyConfigRequest) returns (NodeProxyConfig);
+  rpc SetNodeLastProxy(SetNodeLastProxyRequest) returns (SetNodeLastProxyResponse);
+  rpc SetNodeCapacity(SetNodeCapacityRequest) returns (SetNodeCapacityResponse);
+  rpc MoveNode(MoveNodeRequest) returns (MoveNodeResponse);
+  rpc ManageEditor(ManageEditorRequest) returns (ManageEditorResponse);
+  // ManageNodeEnvironment creates or removes one named shared environment on a
+  // node host. The environment is a persistent HOME a session can run against
+  // (env_mode="shared"), so installed dependencies and CLI login state outlive
+  // any single task. The node owns the on-disk layout; this call carries only
+  // the id. Create is idempotent.
+  rpc ManageNodeEnvironment(ManageNodeEnvironmentRequest) returns (ManageNodeEnvironmentResponse);
+  // SyncNodeEnvironment installs the exact desired skill/plugin set into a shared
+  // environment's HOME (environment maintenance — the real install/uninstall).
+  rpc SyncNodeEnvironment(SyncNodeEnvironmentRequest) returns (SyncNodeEnvironmentResponse);
+  // InspectNodeEnvironment reports what is physically installed in an
+  // environment HOME so the caller can diff it against the configured set.
+  rpc InspectNodeEnvironment(InspectNodeEnvironmentRequest) returns (InspectNodeEnvironmentResponse);
+  // InspectNodeSystemEnv enumerates the skill/plugin/MCP the providers discover
+  // in the node operator's REAL HOME (env_mode="system"). Read-only; this is what
+  // makes a system-env session's actual capability set visible.
+  rpc InspectNodeSystemEnv(InspectNodeSystemEnvRequest) returns (InspectNodeSystemEnvResponse);
+  // SyncNodeSystemEnv installs platform resources into that HOME incrementally,
+  // and removes ONLY entries the platform installed. It never prunes, so the
+  // operator's own resources cannot be deleted through it.
+  rpc SyncNodeSystemEnv(SyncNodeSystemEnvRequest) returns (SyncNodeSystemEnvResponse);
+  // ArchiveNodeSystemEnvResource tars one resource out of that HOME and uploads
+  // it back so a locally installed skill/plugin can enter the platform library.
+  rpc ArchiveNodeSystemEnvResource(ArchiveNodeSystemEnvResourceRequest) returns (ArchiveNodeSystemEnvResourceResponse);
+  rpc SelfUpgradeNode(SelfUpgradeNodeRequest) returns (SelfUpgradeNodeResponse);
+  rpc RuntimeUpgradeNode(RuntimeUpgradeNodeRequest) returns (RuntimeUpgradeNodeResponse);
+  rpc HostExec(HostExecRequest) returns (HostExecResponse);
+  // HostFileUpload streams one chunk of a file upload to a node host. The
+  // caller splits the file into bounded chunks and sends one unary request per
+  // chunk (upload_id correlates them); the node appends to a temp file and
+  // atomically renames on the final chunk after verifying size+sha256.
+  rpc HostFileUpload(HostFileUploadRequest) returns (HostFileUploadResponse);
+  rpc ApproveNode(ApproveNodeRequest) returns (ApproveNodeResponse);
+  rpc RevokeNode(RevokeNodeRequest) returns (RevokeNodeResponse);
+  // DeleteNode permanently removes a node record (any status) and drops its live
+  // connection. Unlike RevokeNode — which keeps the record in a revoked state
+  // for audit — this is a hard delete: the record and its sealed credential are
+  // gone. An online node is refused unless force is set; a management node that
+  // still owns execution nodes is always refused (delete or reassign its
+  // execution nodes first) so it cannot orphan them.
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+
+  // OnboardNode provisions a new node. For the execution role it pre-creates a
+  // pending record, mints a per-node TOTP secret, and returns the secret + a
+  // ready-to-run install command; manager_node_id is REQUIRED and must name an
+  // existing management node that owns it. For the management role it creates a
+  // passive ownership container: approved and online immediately, with no secret
+  // and no client process (it only groups execution nodes).
+  rpc OnboardNode(OnboardNodeRequest) returns (OnboardNodeResponse);
+  // RevokeOnboardNode closes the onboarding loop: for a node that has not yet
+  // registered it deletes the pending record and invalidates the token; for a
+  // node that already registered it revokes it (like RevokeNode) and drops the
+  // live connection. Idempotent.
+  rpc RevokeOnboardNode(RevokeOnboardNodeRequest) returns (RevokeOnboardNodeResponse);
+
+  // DispatchSession places a session on a connected node: the server picks (or
+  // is told) a node, reverse-dispatches a CreateSession command over that node's
+  // NodeConnect stream, waits for the node's ack, and persists the session→node
+  // binding. This is the phase-1 standalone dispatch entrypoint; it does not go
+  // through the run controller.
+  rpc DispatchSession(DispatchSessionRequest) returns (DispatchSessionResponse);
+  // DeleteNodeSession tears a session down on its owning node and clears the
+  // binding.
+  rpc DeleteNodeSession(DeleteNodeSessionRequest) returns (DeleteNodeSessionResponse);
+  // FollowNodeSession streams a session's output/result frames as the owning
+  // node reports them upstream. Used to watch a dispatched task live.
+  rpc FollowNodeSession(FollowNodeSessionRequest) returns (stream NodeSessionEvent);
+  // SendSessionInput delivers a user turn (or EOF) into an interactive session's
+  // running provider process on its owning node. Multi-turn currently supports
+  // the codex provider.
+  rpc SendSessionInput(SendSessionInputRequest) returns (SendSessionInputResponse);
+
+  // ── Split-config session control (each reverse-dispatches a downstream command
+  // to the session's owning node and returns the node's config ack). The server
+  // assigns the monotonic revision; the node reports applied/effective revision
+  // and whether a runtime restart is needed to make the change live. ──
+  //
+  // ConfigureNodeSessionLLM points the session's editor directly at an LLM
+  // service (no server proxy) by writing the provider-specific config/env.
+  rpc ConfigureNodeSessionLLM(ConfigureNodeSessionLLMRequest) returns (NodeSessionConfigAck);
+  // ApplyNodeSessionMCPs sets the full desired MCP server set for a session.
+  rpc ApplyNodeSessionMCPs(ApplyNodeSessionMCPsRequest) returns (NodeSessionConfigAck);
+  // ApplyNodeSessionSkills sets the full desired skill set for a session.
+  rpc ApplyNodeSessionSkills(ApplyNodeSessionSkillsRequest) returns (NodeSessionConfigAck);
+  // ApplyNodeSessionPlugins sets the full desired plugin set for a session.
+  rpc ApplyNodeSessionPlugins(ApplyNodeSessionPluginsRequest) returns (NodeSessionConfigAck);
+  // ConfigureNodeSessionMode selects the editor's permission/approval mode.
+  rpc ConfigureNodeSessionMode(ConfigureNodeSessionModeRequest) returns (NodeSessionConfigAck);
+  // StartNodeSessionRuntime starts a session created with defer_start.
+  rpc StartNodeSessionRuntime(StartNodeSessionRuntimeRequest) returns (NodeSessionConfigAck);
+  // RestartNodeSessionRuntime restarts the editor to apply pending config.
+  rpc RestartNodeSessionRuntime(RestartNodeSessionRuntimeRequest) returns (NodeSessionConfigAck);
+  // CollectNodeSessionArtifacts asks the node to package the session workspace
+  // for retrieval through the tunnel.
+  rpc CollectNodeSessionArtifacts(CollectNodeSessionArtifactsRequest) returns (NodeSessionConfigAck);
+}
+
+enum ProjectValidationSeverity {
+  PROJECT_VALIDATION_SEVERITY_UNSPECIFIED = 0;
+  PROJECT_VALIDATION_SEVERITY_WARNING = 1;
+  PROJECT_VALIDATION_SEVERITY_ERROR = 2;
+}
+
+enum ProjectChangeAction {
+  PROJECT_CHANGE_ACTION_UNSPECIFIED = 0;
+  PROJECT_CHANGE_ACTION_CREATED = 1;
+  PROJECT_CHANGE_ACTION_UPDATED = 2;
+  PROJECT_CHANGE_ACTION_REMOVED = 3;
+  PROJECT_CHANGE_ACTION_UNCHANGED = 4;
+}
+
+enum ProjectWatchEventType {
+  PROJECT_WATCH_EVENT_TYPE_UNSPECIFIED = 0;
+  PROJECT_WATCH_EVENT_TYPE_APPLIED = 1;
+  PROJECT_WATCH_EVENT_TYPE_REMOVED = 2;
+  PROJECT_WATCH_EVENT_TYPE_CHANGED = 3;
+}
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_PENDING = 1;
+  RUN_STATUS_RUNNING = 2;
+  RUN_STATUS_SUCCEEDED = 3;
+  RUN_STATUS_FAILED = 4;
+  RUN_STATUS_CANCELED = 5;
+}
+
+enum RunSource {
+  RUN_SOURCE_UNSPECIFIED = 0;
+  RUN_SOURCE_MANUAL = 1;
+  RUN_SOURCE_SCHEDULER = 2;
+  RUN_SOURCE_API = 3;
+}
+
+enum RunAgentStreamEventType {
+  RUN_AGENT_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  RUN_AGENT_STREAM_EVENT_TYPE_STARTED = 1;
+  RUN_AGENT_STREAM_EVENT_TYPE_OUTPUT = 2;
+  RUN_AGENT_STREAM_EVENT_TYPE_STATUS = 3;
+  RUN_AGENT_STREAM_EVENT_TYPE_COMPLETED = 4;
+}
+
+enum RunSandboxCleanupPolicy {
+  reserved "RUN_SESSION_CLEANUP_POLICY_UNSPECIFIED";
+  reserved "RUN_SESSION_CLEANUP_POLICY_STOP_ON_COMPLETION";
+  reserved "RUN_SESSION_CLEANUP_POLICY_KEEP_RUNNING";
+  reserved "RUN_SESSION_CLEANUP_POLICY_REMOVE_ON_COMPLETION";
+
+  RUN_SANDBOX_CLEANUP_POLICY_UNSPECIFIED = 0;
+  RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION = 1;
+  RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING = 2;
+  RUN_SANDBOX_CLEANUP_POLICY_REMOVE_ON_COMPLETION = 3;
+}
+
+enum ExecStreamEventType {
+  EXEC_STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  EXEC_STREAM_EVENT_TYPE_STARTED = 1;
+  EXEC_STREAM_EVENT_TYPE_OUTPUT = 2;
+  EXEC_STREAM_EVENT_TYPE_COMPLETED = 3;
+}
+
+enum AttachRunMode {
+  ATTACH_RUN_MODE_UNSPECIFIED = 0;
+  ATTACH_RUN_MODE_COMMAND = 1;
+  ATTACH_RUN_MODE_PROMPT = 2;
+}
+
+enum StdioStream {
+  STDIO_STREAM_UNSPECIFIED = 0;
+  STDIO_STREAM_STDOUT = 1;
+  STDIO_STREAM_STDERR = 2;
+}
+
+enum ImageStoreKind {
+  IMAGE_STORE_KIND_UNSPECIFIED = 0;
+  IMAGE_STORE_KIND_DOCKER_DAEMON = 1;
+  IMAGE_STORE_KIND_OCI_CACHE = 2;
+}
+
+enum ImageAvailabilityStatus {
+  IMAGE_AVAILABILITY_STATUS_UNSPECIFIED = 0;
+  IMAGE_AVAILABILITY_STATUS_AVAILABLE = 1;
+  IMAGE_AVAILABILITY_STATUS_MISSING = 2;
+  IMAGE_AVAILABILITY_STATUS_ERROR = 3;
+}
+
+enum ImageOperationStatus {
+  IMAGE_OPERATION_STATUS_UNSPECIFIED = 0;
+  IMAGE_OPERATION_STATUS_SUCCEEDED = 1;
+  IMAGE_OPERATION_STATUS_FAILED = 2;
+  IMAGE_OPERATION_STATUS_RUNNING = 3;
+}
+
+enum MetricStatus {
+  METRIC_STATUS_UNSPECIFIED = 0;
+  METRIC_STATUS_OK = 1;
+  METRIC_STATUS_UNKNOWN = 2;
+  METRIC_STATUS_UNAVAILABLE = 3;
+}
+
+enum CacheDomain {
+  reserved "CACHE_DOMAIN_SESSION_EPHEMERAL_STATE";
+
+  CACHE_DOMAIN_UNSPECIFIED = 0;
+  CACHE_DOMAIN_OCI_IMAGE_STORE = 1;
+  CACHE_DOMAIN_MATERIALIZED_IMAGE_CACHE = 2;
+  CACHE_DOMAIN_RUNTIME_DERIVED_CACHE = 3;
+  CACHE_DOMAIN_SANDBOX_EPHEMERAL_STATE = 4;
+}
+
+enum CacheStatus {
+  CACHE_STATUS_UNSPECIFIED = 0;
+  CACHE_STATUS_ACTIVE = 1;
+  CACHE_STATUS_REFERENCED = 2;
+  CACHE_STATUS_UNUSED = 3;
+  CACHE_STATUS_EXPIRED = 4;
+  CACHE_STATUS_ORPHANED = 5;
+  CACHE_STATUS_UNKNOWN = 6;
+}
+
+message ValidateProjectRequest {
+  ProjectSpec spec = 1;
+  ProjectSource source = 2;
+  string expected_spec_hash = 3;
+}
+
+message ValidateProjectResponse {
+  bool valid = 1;
+  repeated ProjectValidationIssue issues = 2;
+  string spec_hash = 3;
+}
+
+message ApplyProjectRequest {
+  ProjectSpec spec = 1;
+  ProjectSource source = 2;
+  string expected_spec_hash = 3;
+  bool dry_run = 4;
+}
+
+message ApplyProjectResponse {
+  Project project = 1;
+  ProjectRevision revision = 2;
+  repeated ProjectChange changes = 3;
+  repeated ProjectValidationIssue issues = 4;
+  bool applied = 5;
+  bool unchanged = 6;
+}
+
+message GetProjectRequest {
+  ProjectRef project = 1;
+  bool include_spec = 2;
+}
+
+message GetProjectResponse {
+  Project project = 1;
+}
+
+message ListProjectsRequest {
+  string query = 1;
+  bool include_removed = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+message ListProjectsResponse {
+  repeated ProjectSummary projects = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+}
+
+message RemoveProjectRequest {
+  reserved "stop_running_sessions";
+
+  ProjectRef project = 1;
+  bool remove_history = 2;
+  bool stop_running_sandboxes = 3;
+}
+
+message RemoveProjectResponse {
+  Project project = 1;
+  repeated ProjectChange changes = 2;
+}
+
+message WatchProjectRequest {
+  ProjectRef project = 1;
+}
+
+message WatchProjectResponse {
+  ProjectWatchEventType type = 1;
+  Project project = 2;
+  ProjectRevision revision = 3;
+  repeated ProjectChange changes = 4;
+}
+
+message ProjectRef {
+  string project_id = 1;
+  string name = 2;
+  string source_path = 3;
+}
+
+message ProjectSource {
+  string compose_path = 1;
+  string project_dir = 2;
+}
+
+message Project {
+  ProjectSummary summary = 1;
+  ProjectSpec spec = 2;
+  repeated ProjectAgent agents = 3;
+  repeated ProjectScheduler schedulers = 4;
+}
+
+message ProjectSummary {
+  string project_id = 1;
+  string name = 2;
+  string source_path = 3;
+  uint64 current_revision = 4;
+  string spec_hash = 5;
+  uint32 agent_count = 6;
+  uint32 scheduler_count = 7;
+  uint32 running_run_count = 8;
+  string latest_run_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+  string removed_at = 12;
+}
+
+message ProjectRevision {
+  string project_id = 1;
+  uint64 revision = 2;
+  string spec_hash = 3;
+  ProjectSpec spec = 4;
+  string created_at = 5;
+}
+
+message ProjectAgent {
+  string project_id = 1;
+  string agent_name = 2;
+  string managed_agent_id = 3;
+  string provider = 4;
+  string model = 5;
+  string image = 6;
+  string driver = 7;
+  bool scheduler_enabled = 8;
+}
+
+message ProjectScheduler {
+  string project_id = 1;
+  string agent_name = 2;
+  string scheduler_id = 3;
+  string managed_loader_id = 4;
+  bool enabled = 5;
+  uint32 trigger_count = 6;
+}
+
+message ProjectValidationIssue {
+  ProjectValidationSeverity severity = 1;
+  string path = 2;
+  string message = 3;
+}
+
+message ProjectChange {
+  ProjectChangeAction action = 1;
+  string resource_type = 2;
+  string resource_id = 3;
+  string name = 4;
+  string message = 5;
+}
+
+message ProjectSpec {
+  string name = 1;
+  repeated EnvVarSpec variables = 2;
+  reserved 3;
+  reserved "workspace";
+  repeated AgentSpec agents = 4;
+  NetworkSpec network = 5;
+  repeated ProjectVolumeSpec volumes = 6;
+  repeated NamedWorkspaceSpec workspaces = 7;
+  repeated MCPServerSpec mcps = 8;
+}
+
+message NamedWorkspaceSpec {
+  string name = 1;
+  WorkspaceSpec workspace = 2;
+}
+
+message AgentSpec {
+  string name = 1;
+  string provider = 2;
+  string model = 3;
+  string system_prompt = 4;
+  string image = 5;
+  DriverSpec driver = 6;
+  repeated EnvVarSpec env = 7;
+  WorkspaceSpec workspace = 8;
+  SchedulerSpec scheduler = 9;
+  repeated string capset_ids = 10;
+  JupyterSpec jupyter = 11;
+  BuildSpec build = 12;
+  repeated VolumeMountSpec volumes = 13;
+  repeated MCPServerSpec mcps = 14;
+  repeated SkillSpec skills = 15;
+}
+
+message MCPServerSpec {
+  string name = 1;
+  string type = 2;
+  string transport = 3;
+  string command = 4;
+  repeated string args = 5;
+  repeated EnvVarSpec env = 6;
+  string url = 7;
+  repeated EnvVarSpec headers = 8;
+}
+
+message ProjectVolumeSpec {
+  string key = 1;
+  string name = 2;
+  string driver = 3;
+  bool external = 4;
+  map<string, string> labels = 5;
+  map<string, string> options = 6;
+}
+
+message VolumeMountSpec {
+  string type = 1;
+  string source = 2;
+  string target = 3;
+  bool read_only = 4;
+}
+
+message BuildSpec {
+  string context = 1;
+  string dockerfile = 2;
+  string target = 3;
+  map<string, string> args = 4;
+  repeated string platforms = 5;
+  repeated string tags = 6;
+  bool no_cache = 7;
+  bool pull = 8;
+}
+
+message EnvVarSpec {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+}
+
+message WorkspaceSpec {
+  string provider = 1;
+  string url = 2;
+  string branch = 3;
+  string path = 4;
+  string name = 5;
+}
+
+message NetworkSpec {
+  string mode = 1;
+}
+
+message SchedulerSpec {
+  bool enabled = 1;
+  repeated TriggerSpec triggers = 2;
+  string script = 3;
+  string sandbox_policy = 4;
+}
+
+message TriggerSpec {
+  string name = 1;
+  string kind = 2;
+  string cron = 3;
+  string interval = 4;
+  string timeout = 5;
+  EventTriggerSpec event = 6;
+  string prompt = 7;
+  string sandbox_policy = 8;
+}
+
+message EventTriggerSpec {
+  string topic = 1;
+}
+
+message DriverSpec {
+  string name = 1;
+  BoxliteDriverSpec boxlite = 2;
+  DockerDriverSpec docker = 3;
+  MicrosandboxDriverSpec microsandbox = 4;
+}
+
+message BoxliteDriverSpec {
+  string kernel = 1;
+  string rootfs = 2;
+}
+
+message DockerDriverSpec {
+  string host = 1;
+}
+
+message MicrosandboxDriverSpec {
+  string profile = 1;
+}
+
+message RunAgentRequest {
+  reserved 5;
+  reserved "session_id";
+
+  string project_id = 1;
+  string agent_name = 2;
+  string prompt = 3;
+  RunSource source = 4;
+  repeated EnvVarSpec env = 6;
+  RunSandboxCleanupPolicy cleanup_policy = 7;
+  string scheduler_id = 8;
+  string trigger_id = 9;
+  string output_schema_json = 10;
+  string client_request_id = 11;
+  string command = 12;
+  RunJupyterSpec jupyter = 13;
+  string driver = 14;
+  string sandbox_id = 15;
+  repeated VolumeMountSpec volumes = 16;
+  string payload_json = 17;
+}
+
+message RunAgentResponse {
+  RunDetail run = 1;
+  repeated string warnings = 2;
+}
+
+message RunAgentStreamResponse {
+  RunAgentStreamEventType event_type = 1;
+  RunSummary run = 2;
+  string run_id = 3;
+  string chunk = 4;
+  StdioStream stream = 5;
+  string created_at = 6;
+  repeated string warnings = 7;
+  TranscriptEvent transcript = 8;
+}
+
+message RunAttachRequest {
+  string client_frame_id = 15;
+
+  oneof frame {
+    RunAttachStart start = 1;
+    AttachStdin stdin = 2;
+    AttachStdinEOF stdin_eof = 3;
+    AttachResize resize = 4;
+    AttachSignal signal = 5;
+    AttachHumanMessage human_message = 6;
+    AttachCancel cancel = 7;
+  }
+}
+
+message RunAttachResponse {
+  string server_frame_id = 15;
+  string created_at = 16;
+
+  oneof frame {
+    AttachStarted started = 1;
+    AttachOutput output = 2;
+    AttachAgentEvent agent_event = 3;
+    AttachAgentTurnCompleted agent_turn_completed = 4;
+    AttachResult result = 5;
+    AttachError error = 6;
+  }
+}
+
+message RunAttachStart {
+  RunAgentRequest request = 1;
+  AttachRunMode mode = 2;
+  bool attach_stdin = 3;
+  bool tty = 4;
+  AttachTerminalSize terminal_size = 5;
+}
+
+message TranscriptEvent {
+  StdioStream stream = 1;
+  string text = 2;
+  string name = 4;
+  string payload_json = 5;
+  string created_at = 6;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+  string project_id = 2;
+}
+
+message GetRunResponse {
+  RunDetail run = 1;
+}
+
+message ListRunsRequest {
+  reserved 3;
+  reserved "session_id";
+
+  string project_id = 1;
+  string agent_name = 2;
+  string scheduler_id = 4;
+  RunStatus status = 5;
+  RunSource source = 6;
+  string started_from = 7;
+  string started_to = 8;
+  uint32 offset = 9;
+  uint32 limit = 10;
+  string sandbox_id = 11;
+}
+
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+}
+
+message FollowRunLogsRequest {
+  string project_id = 1;
+  string run_id = 2;
+  uint32 tail_lines = 3;
+  uint64 start_offset = 4;
+  bool follow = 5;
+}
+
+message RunLogChunk {
+  string data = 1;
+  uint64 offset = 2;
+  bool is_final = 3;
+  RunStatus run_status = 4;
+  string created_at = 5;
+}
+
+message StopRunRequest {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message StopRunResponse {
+  RunDetail run = 1;
+  bool stop_requested = 2;
+}
+
+message RemoveSandboxRequest {
+  string sandbox_id = 1;
+  bool force = 2;
+}
+
+message RemoveSandboxResponse {
+  string sandbox_id = 1;
+  bool stopped = 2;
+  bool removed = 3;
+}
+
+message GetSandboxStatsRequest {
+  string sandbox_id = 1;
+}
+
+message GetSandboxStatsResponse {
+  SandboxStats stats = 1;
+}
+
+message MetricValue {
+  optional double value = 1;
+  string unit = 2;
+  MetricStatus status = 3;
+  string message = 4;
+}
+
+message SandboxStats {
+  string sandbox_id = 1;
+  string driver = 2;
+  string sampled_at = 3;
+  MetricValue cpu_percent = 4;
+  MetricValue memory_usage_bytes = 5;
+  MetricValue memory_limit_bytes = 6;
+  MetricValue memory_percent = 7;
+  MetricValue network_rx_bytes = 8;
+  MetricValue network_tx_bytes = 9;
+  MetricValue block_read_bytes = 10;
+  MetricValue block_write_bytes = 11;
+  MetricValue uptime_seconds = 12;
+}
+
+message RunSummary {
+  reserved 11;
+  reserved "session_id";
+
+  string run_id = 1;
+  string project_id = 2;
+  string project_name = 3;
+  uint64 project_revision = 4;
+  string agent_id = 5;
+  string agent_name = 6;
+  RunSource source = 7;
+  string scheduler_id = 8;
+  string trigger_id = 9;
+  RunStatus status = 10;
+  int32 exit_code = 12;
+  string error = 13;
+  string started_at = 14;
+  string completed_at = 15;
+  int64 duration_ms = 16;
+  string created_at = 17;
+  string updated_at = 18;
+  repeated string warnings = 19;
+  string sandbox_id = 20;
+  string run_short_id = 21;
+  string sandbox_short_id = 22;
+}
+
+message RunDetail {
+  RunSummary summary = 1;
+  string prompt = 2;
+  string output = 3;
+  string result_json = 4;
+  string logs_path = 5;
+  string artifacts_dir = 6;
+  string cleanup_error = 7;
+  string driver = 8;
+  string image_ref = 9;
+  repeated string warnings = 10;
+}
+
+message ExecRequest {
+  reserved "session_id";
+
+  oneof target {
+    string sandbox_id = 1;
+    string run_id = 2;
+    ExecSandboxSelector selector = 3;
+  }
+  ExecCommand command = 4;
+  string cwd = 5;
+  repeated EnvVarSpec env = 6;
+  uint32 timeout_ms = 7;
+  uint32 max_output_bytes = 8;
+}
+
+message ExecSandboxSelector {
+  string project_id = 1;
+  string project_name = 2;
+  string agent_name = 3;
+}
+
+message ExecCommand {
+  string command = 1;
+  repeated string args = 2;
+}
+
+message ExecResponse {
+  ExecResult result = 1;
+}
+
+message ExecStreamResponse {
+  reserved "session_id";
+
+  ExecStreamEventType event_type = 1;
+  string exec_id = 2;
+  string sandbox_id = 3;
+  string run_id = 4;
+  string chunk = 5;
+  StdioStream stream = 6;
+  ExecResult result = 7;
+  TranscriptEvent transcript = 8;
+}
+
+message ExecAttachRequest {
+  string client_frame_id = 15;
+
+  oneof frame {
+    ExecAttachStart start = 1;
+    AttachStdin stdin = 2;
+    AttachStdinEOF stdin_eof = 3;
+    AttachResize resize = 4;
+    AttachSignal signal = 5;
+    AttachCancel cancel = 6;
+    AttachHumanMessage human_message = 7;
+  }
+}
+
+message ExecAttachResponse {
+  string server_frame_id = 15;
+  string created_at = 16;
+
+  oneof frame {
+    AttachStarted started = 1;
+    AttachOutput output = 2;
+    AttachResult result = 3;
+    AttachError error = 4;
+    AttachAgentEvent agent_event = 5;
+    AttachAgentTurnCompleted agent_turn_completed = 6;
+  }
+}
+
+message ExecAttachStart {
+  ExecRequest request = 1;
+  bool attach_stdin = 2;
+  bool tty = 3;
+  AttachTerminalSize terminal_size = 4;
+  AttachRunMode mode = 5;
+  string prompt = 6;
+}
+
+message AttachTerminalSize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message AttachStdin {
+  bytes data = 1;
+}
+
+message AttachStdinEOF {}
+
+message AttachResize {
+  AttachTerminalSize terminal_size = 1;
+}
+
+message AttachSignal {
+  string signal = 1;
+}
+
+message AttachHumanMessage {
+  string text = 1;
+  map<string, string> metadata = 2;
+}
+
+message AttachCancel {
+  string reason = 1;
+}
+
+message AttachStarted {
+  string operation_id = 1;
+  string exec_id = 2;
+  string run_id = 3;
+  string sandbox_id = 4;
+  RunSummary run = 5;
+  repeated string warnings = 6;
+}
+
+message AttachOutput {
+  bytes data = 1;
+  StdioStream stream = 2;
+  bool tty = 3;
+  TranscriptEvent transcript = 4;
+}
+
+message AttachAgentEvent {
+  string name = 1;
+  string text = 2;
+  string payload_json = 3;
+  string created_at = 4;
+}
+
+message AttachAgentTurnCompleted {
+  string run_id = 1;
+  string result_json = 2;
+  repeated string warnings = 3;
+}
+
+message AttachResult {
+  int32 exit_code = 1;
+  bool success = 2;
+  ExecResult exec_result = 3;
+  RunSummary run = 4;
+  string output = 5;
+  string result_json = 6;
+  string error = 7;
+}
+
+message AttachError {
+  string code = 1;
+  string message = 2;
+  bool terminal = 3;
+  map<string, string> details = 4;
+}
+
+message ExecResult {
+  reserved "session_id";
+
+  string exec_id = 1;
+  string sandbox_id = 2;
+  string run_id = 3;
+  ExecCommand command = 4;
+  string cwd = 5;
+  int32 exit_code = 6;
+  bool success = 7;
+  string stdout = 8;
+  string stderr = 9;
+  string output = 10;
+  bool stdout_truncated = 11;
+  bool stderr_truncated = 12;
+  bool output_truncated = 13;
+  string error = 14;
+}
+
+message ListImagesRequest {
+  ImageStoreKind store = 1;
+  string query = 2;
+  bool all = 3;
+  bool include_cache_status = 4;
+  uint32 offset = 5;
+  uint32 limit = 6;
+}
+
+message ListImagesResponse {
+  repeated Image images = 1;
+  uint32 total_count = 2;
+  bool has_more = 3;
+  uint32 next_offset = 4;
+  ImageStoreStatus store_status = 5;
+}
+
+message PullImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  ImagePlatform platform = 3;
+}
+
+message PullImageResponse {
+  Image image = 1;
+  ImageOperationStatus status = 2;
+  string resolved_ref = 3;
+  repeated ImagePullProgress progress = 4;
+  repeated string warnings = 5;
+}
+
+message InspectImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  bool include_cache_status = 3;
+}
+
+message InspectImageResponse {
+  Image image = 1;
+  ImageStoreStatus store_status = 2;
+}
+
+message RemoveImageRequest {
+  string image_ref = 1;
+  ImageStoreKind store = 2;
+  bool force = 3;
+  bool prune_children = 4;
+}
+
+message RemoveImageResponse {
+  string image_ref = 1;
+  repeated string untagged_refs = 2;
+  repeated string deleted_ids = 3;
+  repeated string warnings = 4;
+}
+
+message BuildImageRequest {
+  string context_dir = 1;
+  string dockerfile = 2;
+  repeated string tags = 3;
+  map<string, string> build_args = 4;
+  string target = 5;
+  ImageStoreKind store = 6;
+  ImagePlatform platform = 7;
+  bool no_cache = 8;
+  bool pull = 9;
+}
+
+message BuildImageEvent {
+  ImageOperationStatus status = 1;
+  string stage = 2;
+  string message = 3;
+  Image image = 4;
+  string image_ref = 5;
+  string resolved_ref = 6;
+  repeated string warnings = 7;
+}
+
+message CacheFilter {
+  string driver = 1;
+  CacheDomain domain = 2;
+  string type = 3;
+  CacheStatus status = 4;
+  uint64 older_than_seconds = 5;
+  string cache_id = 6;
+}
+
+message ListCachesRequest {
+  CacheFilter filter = 1;
+}
+
+message ListCachesResponse {
+  repeated CacheItem caches = 1;
+  repeated string warnings = 2;
+}
+
+message InspectCacheRequest {
+  string cache_id = 1;
+}
+
+message InspectCacheResponse {
+  CacheItem cache = 1;
+  repeated string warnings = 2;
+}
+
+message PruneCachesRequest {
+  CacheFilter filter = 1;
+  bool include_referenced = 2;
+  bool force = 3;
+}
+
+message PruneCachesResponse {
+  bool dry_run = 1;
+  repeated CacheItem matched = 2;
+  repeated string removed = 3;
+  repeated CacheItem skipped = 4;
+  repeated string warnings = 5;
+}
+
+message RemoveCacheRequest {
+  string cache_id = 1;
+  bool force = 2;
+}
+
+message RemoveCacheResponse {
+  bool dry_run = 1;
+  repeated CacheItem matched = 2;
+  repeated string removed = 3;
+  repeated CacheItem skipped = 4;
+  repeated string warnings = 5;
+}
+
+message CacheItem {
+  reserved 10;
+  reserved "session_id";
+
+  string cache_id = 1;
+  CacheDomain domain = 2;
+  string driver = 3;
+  string kind = 4;
+  string path = 5;
+  uint64 size_bytes = 6;
+  string image_id = 7;
+  string image_ref = 8;
+  string resolved_ref = 9;
+  string sandbox_id = 11;
+  CacheStatus status = 12;
+  bool removable = 13;
+  repeated string blocked_reasons = 14;
+  string last_used_at = 15;
+  string last_used_source = 16;
+  repeated CacheReference references = 17;
+  repeated string warnings = 18;
+}
+
+message CacheReference {
+  string type = 1;
+  string id = 2;
+  string name = 3;
+  string path = 4;
+  string status = 5;
+  string description = 6;
+}
+
+message ListVolumesRequest {
+  string query = 1;
+  string driver = 2;
+  string project_id = 3;
+}
+
+message ListVolumesResponse {
+  repeated Volume volumes = 1;
+}
+
+message CreateVolumeRequest {
+  string name = 1;
+  string driver = 2;
+  map<string, string> labels = 3;
+  map<string, string> options = 4;
+}
+
+message CreateVolumeResponse {
+  Volume volume = 1;
+  bool created = 2;
+}
+
+message InspectVolumeRequest {
+  string name = 1;
+}
+
+message InspectVolumeResponse {
+  Volume volume = 1;
+}
+
+message RemoveVolumeRequest {
+  string name = 1;
+  bool force = 2;
+}
+
+message RemoveVolumeResponse {
+  string name = 1;
+  bool removed = 2;
+}
+
+message PruneVolumesRequest {
+  string query = 1;
+  string driver = 2;
+  string project_id = 3;
+  bool force = 4;
+}
+
+message PruneVolumesResponse {
+  bool dry_run = 1;
+  repeated Volume matched = 2;
+  repeated Volume removed = 3;
+  repeated Volume skipped = 4;
+}
+
+message Volume {
+  string name = 1;
+  string driver = 2;
+  string path = 3;
+  map<string, string> labels = 4;
+  map<string, string> options = 5;
+  string project_id = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message Image {
+  string image_id = 1;
+  string image_ref = 2;
+  string resolved_ref = 3;
+  repeated string repo_tags = 4;
+  repeated string repo_digests = 5;
+  ImageStoreKind store = 6;
+  ImageAvailabilityStatus availability_status = 7;
+  ImagePlatform platform = 8;
+  uint64 size_bytes = 9;
+  uint64 virtual_size_bytes = 10;
+  string created_at = 11;
+  string inspected_at = 12;
+  bool dangling = 13;
+  uint64 container_count = 14;
+  DockerImageStatus docker = 15;
+  OCIImageStatus oci = 16;
+  map<string, string> labels = 17;
+}
+
+message ImagePlatform {
+  string os = 1;
+  string architecture = 2;
+  string variant = 3;
+  string os_version = 4;
+}
+
+message ImageStoreStatus {
+  ImageStoreKind store = 1;
+  bool available = 2;
+  string endpoint = 3;
+  string error = 4;
+}
+
+message DockerImageStatus {
+  bool local = 1;
+  string parent_id = 2;
+  int64 shared_size_bytes = 3;
+}
+
+message OCIImageStatus {
+  bool layout_cached = 1;
+  bool rootfs_cached = 2;
+  string cache_key = 3;
+  string manifest_digest = 4;
+  string config_digest = 5;
+  string media_type = 6;
+}
+
+message ImagePullProgress {
+  string id = 1;
+  string status = 2;
+  string progress = 3;
+  uint64 current_bytes = 4;
+  uint64 total_bytes = 5;
+}
+
+message JupyterSpec {
+  bool enabled = 1;
+  uint32 guest_port = 2;
+}
+
+message RunJupyterSpec {
+  bool enabled = 1;
+  uint32 guest_port = 2;
+  bool expose = 3;
+}
+
+message StartRunRequest {
+  RunAgentRequest run = 1;
+}
+
+message StartRunResponse {
+  RunSummary run = 1;
+  repeated string warnings = 2;
+  bool started = 3;
+}
+
+message SkillSpec {
+  string name = 1;
+  string source = 2;
+  string url = 3;
+  string path = 4;
+  string ref = 5;
+  string username = 6;
+  string password = 7;
+  string token = 8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NodeService messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_PENDING = 1; // registered, awaiting management approval
+  NODE_STATUS_APPROVED = 2; // approved, eligible to receive sessions
+  NODE_STATUS_REVOKED = 3; // revoked, connection refused
+}
+
+// NodeRole distinguishes what a connected node is for. An execution node runs
+// provider CLIs and takes sessions; a management node only starts/stops
+// execution nodes on its host on the server's behalf (it has no session
+// capacity) and dials the same NodeConnect stream. A passive management node is
+// a pure ownership container: it never dials in, carries no credential, and
+// launches nothing — it exists only to own execution nodes, and the server
+// treats it as approved+online at onboard.
+enum NodeRole {
+  NODE_ROLE_UNSPECIFIED = 0;
+  NODE_ROLE_EXECUTION = 1;
+  NODE_ROLE_MANAGEMENT = 2;
+  NODE_ROLE_PASSIVE_MANAGEMENT = 3;
+  // An iOS device host: it runs no coding sessions and launches no nodes. It
+  // dials in for identity/heartbeat/version-report/self-upgrade only, and drives
+  // its paired iPhones over a separate device-control WebSocket (the phone
+  // command plane is disjoint from this control plane).
+  NODE_ROLE_IOS_HOST = 4;
+}
+
+// NodeStartupMethod selects which install script the server hands out at
+// onboarding and records how a node process is expected to run on its host.
+enum NodeStartupMethod {
+  NODE_STARTUP_METHOD_UNSPECIFIED = 0;
+  NODE_STARTUP_METHOD_STANDALONE = 1; // run the binary directly
+  NODE_STARTUP_METHOD_SYSTEMD = 2; // installed as a systemd unit
+  NODE_STARTUP_METHOD_DOCKER = 3; // docker run
+  NODE_STARTUP_METHOD_DOCKER_COMPOSE = 4; // docker compose up
+}
+
+// NodeUpstreamFrame: node → server. One envelope, oneof payload, mirroring the
+// RunAttach/ExecAttach frame style (client_frame_id + oneof).
+message NodeUpstreamFrame {
+  string client_frame_id = 15;
+
+  oneof frame {
+    NodeRegister register = 1;
+    NodeHeartbeat heartbeat = 2;
+    NodeSessionOutput session_output = 3;
+    NodeSessionResult session_result = 4;
+    NodeCommandAck command_ack = 5;
+    NodeError error = 6;
+    // Reverse-proxy tunnel: the node streams an HTTP response back for a request
+    // the server pushed down. Multiplexed over the single NodeConnect stream by
+    // tunnel_id so many concurrent proxied requests share one connection.
+    NodeTunnelResponse tunnel_response = 7;
+    // Structured session event parsed by the node from the runtime's NDJSON
+    // output (agent_event/agent_turn_completed/…). This is additive alongside
+    // the raw session_output byte stream: it exposes tool calls, reasoning,
+    // progress, todos, file changes and per-agent status the server can render.
+    NodeSessionEventStructured session_event = 8;
+    // Host terminal: PTY output bytes for an open terminal, correlated by
+    // terminal_id (see NodeTerminalOpen).
+    NodeTerminalOutput terminal_output = 9;
+    // Host terminal: the shell exited (or could not be started); the terminal is
+    // gone and the server should close the corresponding websocket.
+    NodeTerminalExit terminal_exit = 10;
+    // Host command result: one-shot command output correlated by request_id.
+    NodeHostExecResult host_exec_result = 11;
+    // Host file upload: per-chunk result correlated by upload_id.
+    NodeFileUploadResult file_upload_result = 12;
+    // Host terminals still open on this node, with the command each most recently
+    // submitted. Reply to NodeTerminalListRequest, correlated by request_id.
+    NodeTerminalListResult terminal_list_result = 13;
+    // Long-running external tool (frpc/cloudflared/npc/…) the node started on
+    // behalf of the tunnel manager. Streams stdout/stderr chunks + an exit event,
+    // correlated by run_id. Unlike host_exec this is for daemons that stay alive.
+    NodeToolRunEvent tool_run_event = 14;
+    // Per-step progress of session preparation (workspace → clone → runtime
+    // preflight → start). Lets a failed start name the step that broke instead
+    // of surfacing one opaque exit code. Field number 16: 15 is client_frame_id.
+    NodeSessionStage session_stage = 16;
+    // ─── iOS host management (role ios_host) ─────────────────────────────────
+    // The iOS host's inventory of physically attached/reachable iPhones. Sent
+    // unsolicited on register, on USB/network attach-detach, after a claim or
+    // release, and whenever a device's WDA state changes — so the server never
+    // has to poll a host to know what hardware is on it.
+    NodeIosDevicesReport ios_devices_report = 17;
+    // Streamed progress of one WDA job (download → sign → install → launch).
+    // Correlated by job_id; seq is monotonic per job so a reconnecting server
+    // can tell gaps from reordering.
+    NodeIosJobEvent ios_job_event = 18;
+    // Terminal outcome of one WDA job. Always sent exactly once per job_id,
+    // including on failure/cancellation, so a pending server-side future never
+    // hangs on the ack timeout alone.
+    NodeIosJobResult ios_job_result = 19;
+    // ─── Generic node build pipeline ─────────────────────────────────────────
+    // Streamed progress of one build (clone → steps → package → upload).
+    // Correlated by build_id; seq is monotonic per build.
+    NodeBuildEvent node_build_event = 20;
+    // Terminal outcome of one build. Always sent exactly once per build_id,
+    // including on failure/cancellation.
+    NodeBuildResult node_build_result = 21;
+  }
+}
+
+// NodeDownstreamFrame: server → node. Session lifecycle commands pushed over
+// the node's already-established outbound stream.
+message NodeDownstreamFrame {
+  string server_frame_id = 15;
+  string created_at = 16;
+
+  oneof frame {
+    NodeRegistered registered = 1;
+    NodeCreateSession create_session = 2;
+    NodeDeleteSession delete_session = 3;
+    NodeListSessions list_sessions = 4;
+    NodeError error = 5;
+    // Reverse-proxy tunnel: the server pushes an HTTP request for the node to
+    // forward to a session-local service (jupyter/files/…). Correlated by
+    // tunnel_id; the node replies with NodeTunnelResponse frames.
+    NodeTunnelRequest tunnel_request = 6;
+    // Multi-turn input: for an interactive session the server pushes a new user
+    // turn (or an end-of-input signal) into the session's long-running provider
+    // process. Session output continues to stream up via NodeSessionOutput.
+    NodeSessionInput session_input = 7;
+    // Management plane: the server asks a management node to launch an execution
+    // node on its host (docker/systemd/…). The launched node then dials the
+    // server itself and registers with the one-time token in the spec. The
+    // management node acks with NodeCommandAck (ok = launch started).
+    NodeCreateExecutionNode create_execution_node = 8;
+    // Management plane: the server asks a management node to stop/remove an
+    // execution node it previously launched, by launch handle. Acked with
+    // NodeCommandAck.
+    NodeDeleteExecutionNode delete_execution_node = 9;
+    // First frame the server sends after the stream opens: authoritative time
+    // the node uses to derive its TOTP code for the subsequent NodeRegister.
+    NodeServerHello server_hello = 10;
+    // ---- Split session configuration (applied before/independent of runtime
+    // start). Each carries a revision so the node can report which config
+    // version is on disk vs. which the running editor actually loaded. The node
+    // writes them to the session's per-editor config files and acks with
+    // NodeCommandAck (applied_revision + restart_required). ----
+    // Configure the LLM the session's editor talks to DIRECTLY (no server-side
+    // proxy): the node writes the provider's config/env to point at the LLM
+    // service in the payload with the supplied key.
+    ConfigureSessionLLM configure_session_llm = 11;
+    // Full desired set of MCP servers for the session. The node rewrites the
+    // editor's managed MCP config block to exactly this set.
+    ApplySessionMCPs apply_session_mcps = 12;
+    // Full desired set of skills. The node syncs them into the session skills dir.
+    ApplySessionSkills apply_session_skills = 13;
+    // Full desired set of plugins. The node fetches/installs them locally.
+    ApplySessionPlugins apply_session_plugins = 14;
+    // Start the editor runtime for a session that was created without
+    // auto-start (config applied first). No-op if already running.
+    StartSessionRuntime start_session_runtime = 17;
+    // Stop the current editor process (keeping workDir/git/state/config) and
+    // start it again against the latest applied config revision.
+    RestartSessionRuntime restart_session_runtime = 18;
+    // Select/patch the editor mode (permission/approval档位) for a session.
+    ConfigureSessionMode configure_session_mode = 19;
+    // Ask the node to package the session's working tree and make it available
+    // for the server to pull back (artifact collection).
+    CollectSessionArtifacts collect_session_artifacts = 20;
+    // ─── Node forward HTTP proxy ────────────────────────────────────────────
+    // Server -> node: perform one HTTP request to an absolute URL. The node
+    // makes the outbound connection (including TLS) and streams the response
+    // back as NodeTunnelResponse frames correlated by tunnel_id.
+    NodeProxyRequest proxy_request = 21;
+    // Ask an execution node to install or upgrade one of the supported editor
+    // CLIs (claude/codex/gemini/opencode) using that editor's own official
+    // command. Acked with NodeCommandAck; on success editor_version carries the
+    // freshly probed version string so the server can refresh capabilities.
+    NodeManageEditor manage_editor = 22;
+    // Ask a node to self-upgrade its own binary: download the platform build at
+    // download_url, verify the optional sha256, atomically replace the running
+    // binary, and re-exec. Acked with NodeCommandAck (ok = accepted + download
+    // started); the upgrade truly takes effect when the node reconnects with the
+    // new client_version. docker-deployed nodes reject it (re-pull the image).
+    NodeSelfUpgrade self_upgrade = 23;
+    // Ask a node to update its separately packaged JavaScript runtime. Unlike
+    // self_upgrade this does not restart the Go process; newly started editor
+    // sessions use the replacement runtime after the node acks completion.
+    NodeRuntimeUpgrade runtime_upgrade = 34;
+    // ─── Host terminal (management console shell) ───────────────────────────
+    // Server -> node: open an interactive PTY shell on the node's HOST (not a
+    // session sandbox), keyed by terminal_id. The node spawns the shell in a
+    // pseudo-terminal and streams its output back as NodeTerminalOutput frames.
+    // Multiplexed over the single NodeConnect stream by terminal_id, so many
+    // concurrent terminals share one connection (same pattern as tunnels).
+    NodeTerminalOpen terminal_open = 24;
+    // Server -> node: stdin bytes for an open terminal.
+    NodeTerminalInput terminal_input = 25;
+    // Server -> node: resize an open terminal's PTY window.
+    NodeTerminalResize terminal_resize = 26;
+    // Server -> node: close an open terminal (kill the shell, release the PTY).
+    NodeTerminalClose terminal_close = 27;
+    // Server -> node: reattach to a terminal that already exists on the node,
+    // resuming its output stream after `after_sequence`. Sent on a NodeConnect
+    // reconnect: the PTY (and its foreground processes) survived the dropped
+    // stream, so the server asks the node to resume streaming rather than opening
+    // a fresh shell. The node replies with buffered NodeTerminalOutput frames, or
+    // a NodeTerminalExit carrying error="terminal_not_found" if it is really gone.
+    NodeTerminalAttach terminal_attach = 31;
+    // Server -> node: report every host terminal this node still has open, with
+    // the command each one most recently submitted. This is what the management
+    // console's terminal tab renders — the node is the source of truth for which
+    // PTYs exist, so the server asks rather than trusting its own bookkeeping.
+    NodeTerminalListRequest terminal_list = 32;
+    // Server -> node: interrupt whatever the terminal is currently running by
+    // writing the interrupt character into its PTY. This ends the running command
+    // and hands the prompt back; it does NOT close the terminal.
+    NodeTerminalInterrupt terminal_interrupt = 33;
+    // Server -> node: execute one host-shell command and return structured output.
+    NodeHostExecRequest host_exec = 28;
+    // Server -> node: one chunk of a host file upload, correlated by upload_id.
+    NodeFileUploadRequest file_upload = 30;
+    // Global public-IP lookup configuration. The common node client consumes
+    // this snapshot; role-specific handlers never see it.
+    NodePublicIPLookupConfig public_ip_lookup_config = 29;
+    // This node's own egress proxy for GitHub downloads (self-upgrade /
+    // runtime-upgrade). Per-node binding (set at onboard / node detail page),
+    // pushed on connect + on change, revision-gated like public_ip_lookup_config.
+    NodeProxyConfig node_proxy_config = 35;
+    // ─── Long-running external tool (tunnel manager) ─────────────────────────
+    // Server -> node: start a long-running external CLI (frpc/cloudflared/npc)
+    // on the node host. The node streams stdout/stderr back as NodeToolRunEvent
+    // frames correlated by run_id, and a final exited event with the exit code.
+    // Unlike host_exec this is for daemons that stay alive; stop with
+    // NodeToolRunStop. The node is the process owner; on NodeConnect reconnect
+    // the process keeps running and the server reattaches by run_id (later).
+    NodeToolRunRequest tool_run_request = 36;
+    // Server -> node: stop a previously started tool run by run_id (SIGTERM,
+    // then SIGKILL after a grace period). The node sends a final exited event.
+    NodeToolRunStop tool_run_stop = 37;
+    // Server -> node: create a named shared environment directory on this host,
+    // or remove one. The node owns the path layout; the server only names the id.
+    NodeManageEnvironment manage_environment = 38;
+    // Server -> node: install the exact desired skill/plugin set into a shared
+    // environment's HOME. This is the *environment maintenance* channel — the
+    // real install/uninstall — as opposed to a task activating a subset.
+    NodeSyncEnvironment sync_environment = 39;
+    // Server -> node: report what is physically installed in an environment HOME
+    // so the server can diff it against the configured set.
+    NodeInspectEnvironment inspect_environment = 40;
+    // ─── iOS host management (role ios_host) ─────────────────────────────────
+    // Ask an iOS host to re-enumerate its attached iPhones and reply with a
+    // NodeIosDevicesReport. The host also reports unsolicited on attach/detach,
+    // so this is the user-pressed "rescan" path, not the only source of truth.
+    NodeIosDiscover ios_discover = 41;
+    // Ask an iOS host to adopt one discovered iPhone: redeem the one-time
+    // device-control pairing code in the payload, persist the resulting 0600
+    // credential, and start that device's device-control connection. The host
+    // acks with NodeCommandAck once the credential is on disk — the device then
+    // shows up through the normal device-control register path.
+    NodeIosClaimDevice ios_claim_device = 42;
+    // Ask an iOS host to stop driving a device and (optionally) delete its local
+    // credential. Sent alongside a server-side revoke so the host does not keep
+    // reconnecting a device whose token is already dead.
+    NodeIosReleaseDevice ios_release_device = 43;
+    // Push the desired per-device configuration (transport, WDA identity/policy)
+    // to an iOS host. Revision-gated: a host that already applied a newer
+    // revision acks with what it has rather than rolling back.
+    NodeIosConfigureDevice ios_configure_device = 44;
+    // Ask an iOS host to run one WDA job for a device: fetch the approved
+    // artifact, sign it (App Store Connect API or supplied p12), install it,
+    // launch the runner and verify readiness. Progress streams back as
+    // NodeIosJobEvent; the outcome as NodeIosJobResult.
+    NodeIosWdaJobRequest ios_wda_job = 45;
+    // Ask an iOS host to cancel a running WDA job at the next stage boundary.
+    NodeIosJobCancel ios_job_cancel = 46;
+    // Server -> node: scan the operator's real HOME for the skill/plugin/MCP the
+    // providers actually discover in a system-env session. No env_id — the
+    // target is os.UserHomeDir(). Answers via
+    // NodeCommandAck.system_env_inventory (field 10).
+    NodeInspectSystemEnv inspect_system_env = 47;
+    // Server -> node: install platform resources into the operator's real HOME
+    // (system env). INCREMENTAL only — never prunes, and remove= only accepts
+    // entries the platform itself installed (manifest-tracked), so hand-installed
+    // entries are never deleted by the server.
+    NodeSyncSystemEnv sync_system_env = 48;
+    // Server -> node: tar up one resource out of the operator's real HOME and
+    // POST it to a server pre-signed upload endpoint, so a locally installed
+    // skill/plugin can be archived into the platform resource library.
+    NodeArchiveSystemEnvResource archive_system_env_resource = 49;
+    // ─── Generic node build pipeline ─────────────────────────────────────────
+    // Server -> node: run one build (clone fixed source, exec steps, upload the
+    // artifact). Recipe-agnostic: the server renders the steps, the node only
+    // executes them. WDA is the first recipe; the frame shape is deliberately
+    // generic so later recipes (docker image, go binary, …) need no proto change.
+    NodeBuildRequest node_build = 50;
+    // Server -> node: cancel a running build at the next stage boundary.
+    NodeBuildCancel node_build_cancel = 51;
+  }
+}
+
+// EnvironmentAction selects create vs. remove for ManageNodeEnvironment.
+enum EnvironmentAction {
+  ENVIRONMENT_ACTION_UNSPECIFIED = 0;
+  ENVIRONMENT_ACTION_CREATE = 1;
+  ENVIRONMENT_ACTION_REMOVE = 2;
+}
+
+// Server -> node: provision or delete one shared environment on the node host.
+// A shared environment is a persistent HOME directory that any number of
+// sessions can run against, so installed dependencies and CLI login state
+// survive across tasks. The node resolves env_id to its own local path (under
+// its work root) — the server stores only the id, never a node-local path,
+// matching how NodeTerminalOpen.session_id already works.
+//
+// CREATE is idempotent: an existing environment directory is left as-is and
+// acked ok, so a retried dispatch cannot wipe a live environment. REMOVE
+// deletes the directory tree and everything installed in it.
+message NodeManageEnvironment {
+  string env_id = 1;
+  EnvironmentAction action = 2;
+}
+
+// Server -> node: make a shared environment's installed skill/plugin set match
+// this list exactly. This is environment *maintenance*: the node downloads and
+// lays out the files under the environment HOME, and prunes managed entries that
+// are no longer desired.
+//
+// Two things are deliberately NOT here:
+//   - MCP. It is config, not a file; materializing it into a shared HOME would
+//     write per-task credentials into a directory other tasks read. MCP is
+//     resolved per task into that task's private state root instead.
+//   - A task's active subset. Removing a skill from a task must not uninstall it
+//     from the environment, so activation is carried per session (see
+//     NodeCreateSession.active_skills) and never through this frame.
+message NodeSyncEnvironment {
+  string env_id = 1;
+  repeated SkillSpec skills = 2;
+  repeated NodePluginSpec plugins = 3;
+}
+
+// Server -> node: list what is actually on disk in an environment HOME. The node
+// answers with NodeCommandAck.environment_inventory. Used to show 已安装 /
+// 待安装 / 多余 against the configured set — including entries an operator
+// installed by hand from a maintenance shell, which appear with no configured
+// counterpart.
+message NodeInspectEnvironment {
+  string env_id = 1;
+}
+
+// One physically present resource in an environment HOME, as observed by the
+// node. kind is "skill" or "plugin" (MCP is never on disk). version is best
+// effort: it comes from the package manifest when one is present, else empty.
+message NodeEnvironmentEntry {
+  string kind = 1;
+  string name = 2;
+  string version = 3;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System environment (env_mode="system") — the node operator's REAL HOME.
+//
+// Why this is a separate channel from the shared-environment one above: a shared
+// environment is a directory the node created and owns, so an exact-set sync
+// (install the desired list, prune the rest) is correct there. The operator's
+// HOME is not ours: it holds skills/plugins/MCP the operator installed by hand,
+// which providers already discover today (claude reads ~/.claude/skills, others
+// read ~/.agents/{skills,plugins}, gemini ~/.gemini/extensions, MCP ~/.mcp.json).
+// Pruning it would delete the operator's own setup. So this channel is:
+//   - read-first: the inventory is the point, so the console can finally SHOW
+//     what a system-env session actually gets;
+//   - incremental on write: install/skip/overwrite one entry at a time, and only
+//     ever remove entries the platform itself installed (tracked in a manifest
+//     under <home>/.agent-compose/system-env.json).
+// None of these frames carry env_id — there is exactly one operator HOME per
+// node, so the node id addresses it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Server -> node: enumerate what the providers would discover in the operator's
+// HOME. Answered with NodeCommandAck.system_env_inventory.
+message NodeInspectSystemEnv {
+  // provider narrows the scan to one provider's discovery paths (claude/codex/
+  // gemini/opencode). Empty scans every known path plus the MCP config.
+  string provider = 1;
+}
+
+// Server -> node: install platform resources into the operator's HOME, and/or
+// remove platform-installed ones. Deliberately NOT an exact-set sync.
+message NodeSyncSystemEnv {
+  repeated SkillSpec skills = 1;
+  repeated NodePluginSpec plugins = 2;
+  // overwrite decides what happens when the target name already exists on disk:
+  // false (default) skips it and reports it as skipped, true replaces it. The
+  // caller surfaces this as a user choice because the existing copy may be the
+  // operator's own.
+  bool overwrite = 3;
+  // remove names entries to delete. The node refuses any name that is not in its
+  // platform manifest, so a hand-installed resource cannot be deleted through
+  // this API even if the server asks.
+  repeated string remove = 4;
+}
+
+// Server -> node: tar one resource out of the operator's HOME and POST it to a
+// server upload endpoint. Used to archive a locally installed skill/plugin into
+// the platform resource library so other nodes/environments can reuse it.
+// The bytes travel over HTTP, not this stream: the frame only carries where to
+// send them and the one-time token to authorize it.
+message NodeArchiveSystemEnvResource {
+  string kind = 1; // skill | plugin (MCP is config, nothing to archive)
+  string name = 2;
+  string upload_url = 3;
+  string upload_token = 4;
+}
+
+// One resource the node observed in the operator's HOME.
+message NodeSystemEnvEntry {
+  string kind = 1;    // skill | plugin | mcp
+  string name = 2;
+  string version = 3; // best effort; empty is normal (skills carry no version)
+  // provider whose discovery path this entry was found under. Empty for MCP
+  // (one shared config file) and for the provider-neutral .agents tree.
+  string provider = 4;
+  string path = 5; // HOME-relative path, so the console can explain the source
+  // platform_managed is true when this entry is in the node's platform manifest
+  // (i.e. the platform installed it). Only these may be removed via
+  // NodeSyncSystemEnv.remove; everything else is the operator's and read-only.
+  bool platform_managed = 6;
+}
+
+// EditorAction selects install vs. upgrade for ManageEditor.
+enum EditorAction {
+  EDITOR_ACTION_UNSPECIFIED = 0;
+  EDITOR_ACTION_INSTALL = 1;
+  EDITOR_ACTION_UPGRADE = 2;
+}
+
+// Server -> node: install or upgrade one editor CLI. editor is one of
+// claude/codex/gemini/opencode (case-insensitive); unknown values fail the ack.
+message NodeManageEditor {
+  string editor = 1;
+  EditorAction action = 2;
+}
+
+// Server -> node: self-upgrade the node binary. download_url is the full address
+// of the release asset for this node's os/arch (a public GitHub release direct
+// link; the node needs no admin session). sha256, when non-empty, is checked
+// before the binary is swapped in. target_version is informational (the version
+// the server expects after restart).
+//
+// The proxy_* fields let the server hand the node an egress route for the
+// download, since a node behind a restricted network may not reach GitHub
+// directly. Empty proxy_mode means download directly.
+message NodeSelfUpgrade {
+  string target_version = 1;
+  string download_url = 2;
+  string sha256 = 3;
+  // "" | "network" | "url_prefix"
+  string proxy_mode = 4;
+  // network mode: full proxy URL (http/https/socks5, credentials pre-injected).
+  string proxy_url = 5;
+  // url_prefix mode: reverse-proxy prefix (Cloudflare Worker style) the node
+  // prepends to download_url.
+  string proxy_url_prefix = 6;
+}
+
+// Server -> node: update the separately packaged JavaScript runtime. The node
+// downloads a platform-specific tar.gz, verifies sha256, extracts into a staged
+// directory, and atomically switches the managed runtime directory. No Go
+// process restart is required. proxy_* mirrors NodeSelfUpgrade.
+message NodeRuntimeUpgrade {
+  string target_version = 1;
+  string download_url = 2;
+  string sha256 = 3;
+  string proxy_mode = 4;
+  string proxy_url = 5;
+  string proxy_url_prefix = 6;
+}
+
+// Server -> node: open a host-shell terminal. cwd empty means the node's own
+// user home directory (os.UserHomeDir()); shell empty means the node's
+// platform default ($SHELL / bash / sh on unix, powershell.exe / cmd.exe on
+// windows). terminal_size is the initial PTY window; a real terminal is
+// unusable at 0x0, so the node falls back to a sane default (80x24) if unset.
+message NodeTerminalOpen {
+  string terminal_id = 1;
+  string shell = 2;
+  string cwd = 3;
+  AttachTerminalSize terminal_size = 4;
+  // Optional: open the shell in this session's workspace directory. When set and
+  // the session exists, the node resolves the workspace path itself and ignores
+  // `cwd` — the server never learns (or dictates) the node-local absolute path.
+  // Empty preserves the legacy behavior (explicit `cwd`, else node home).
+  string session_id = 5;
+  // Optional: open the shell inside a named shared environment's HOME, for
+  // environment maintenance (install deps, log a CLI in, update toolchain).
+  // When set, the node resolves the env directory itself and points HOME at it,
+  // so the login shell lands inside the environment rather than the node
+  // operator's home. The server stores only the id, never a node-local path.
+  // Empty preserves the legacy behavior. session_id and env_id are mutually
+  // exclusive: env_id wins when both are set (a maintenance shell targets the
+  // environment, not a session).
+  string env_id = 6;
+}
+
+// Server -> node: stdin bytes for an open terminal.
+message NodeTerminalInput {
+  string terminal_id = 1;
+  bytes data = 2;
+}
+
+// Server -> node: resize an open terminal's PTY window.
+message NodeTerminalResize {
+  string terminal_id = 1;
+  AttachTerminalSize terminal_size = 2;
+}
+
+// Server -> node: close an open terminal (kill the shell, release the PTY).
+message NodeTerminalClose {
+  string terminal_id = 1;
+}
+
+// Server -> node: resume streaming an EXISTING terminal after a NodeConnect
+// reconnect. The node keeps its PTYs alive across a dropped control stream, so a
+// reconnect must reattach rather than open a new shell (which would lose cwd and
+// any running foreground process).
+//
+// after_sequence is the sequence number of the last NodeTerminalOutput the server
+// successfully handed to a browser. The node replays whatever it still holds in
+// its bounded per-terminal buffer beyond that point, then resumes live streaming.
+// If the requested point has already been evicted from the buffer, the node sets
+// replay_truncated on the first frame so the UI can say output was dropped
+// instead of silently presenting a gap as continuous.
+message NodeTerminalAttach {
+  string terminal_id = 1;
+  uint64 after_sequence = 2;
+}
+
+// Server -> node: list the host terminals this node still has open.
+// Correlated by request_id; the node replies with NodeTerminalListResult.
+message NodeTerminalListRequest {
+  string request_id = 1;
+}
+
+// Node -> server: one open host terminal and what it is currently running.
+//
+// `current_command` is the last command line the terminal SUBMITTED — the node
+// records it when it sees a carriage return in the PTY input stream, whether the
+// bytes came from an operator's keystrokes or from an agent command. `running`
+// says whether that command has produced its shell prompt back yet; when false
+// the terminal is idle at a prompt and current_command is merely the last thing
+// that ran. The node does not inspect OS process tables: this is a record of
+// what was typed, which is exactly what the console needs to decide whether
+// interrupting the terminal would kill work someone cares about.
+message NodeTerminalStatus {
+  string terminal_id = 1;
+  // Last submitted command line ("" when nothing has been submitted yet).
+  string current_command = 2;
+  // True while that command is still running (no prompt back yet).
+  bool running = 3;
+  // Where the command came from: "agent" when the server injected it through the
+  // agent-command path, "personal" when an operator typed it.
+  string source = 4;
+  // RFC3339Nano when the command was submitted; empty when nothing has run.
+  string started_at = 5;
+  // RFC3339Nano when the PTY was opened.
+  string created_at = 6;
+  // True while the control stream is relaying this terminal to a browser.
+  bool attached = 7;
+}
+
+message NodeTerminalListResult {
+  string request_id = 1;
+  repeated NodeTerminalStatus terminals = 2;
+}
+
+// Server -> node: interrupt the command the terminal is currently running by
+// writing the interrupt character into its PTY, then hand the prompt back. The
+// terminal itself stays open — this is "stop what it is doing", not "close it".
+message NodeTerminalInterrupt {
+  string terminal_id = 1;
+}
+
+// Node -> server: PTY output bytes (stdout+stderr interleaved, as the PTY
+// itself interleaves them).
+//
+// sequence is monotonic per terminal, starting at 1. It lets the server resume a
+// terminal after a NodeConnect reconnect (see NodeTerminalAttach.after_sequence)
+// and dedupe a frame that was replayed after being delivered. replay_truncated is
+// set on the first frame of a reattach whose requested resume point had already
+// been evicted from the node's bounded buffer: some output is genuinely lost and
+// the UI must say so rather than imply a continuous stream.
+message NodeTerminalOutput {
+  string terminal_id = 1;
+  bytes data = 2;
+  uint64 sequence = 3;
+  bool replay_truncated = 4;
+}
+
+// Node -> server: the shell process exited, or the terminal failed to start
+// (error non-empty in that case). The node drops its PTY state after sending
+// this; the server should treat the terminal as gone.
+message NodeTerminalExit {
+  string terminal_id = 1;
+  int32 exit_code = 2;
+  string error = 3;
+}
+
+// Server -> node: run one host-shell command non-interactively and return its
+// structured result. Unlike NodeTerminalOpen (an interactive PTY shared by a
+// human), this is a one-shot `os/exec` invocation: separated stdout/stderr and a
+// per-command exit code, suitable for an automated caller (the server-side AI
+// admin assistant). Correlated by request_id.
+message NodeHostExecRequest {
+  string request_id = 1;
+  // command is executed via the host shell (`/bin/sh -c` on unix,
+  // `cmd.exe /c` on windows). cwd empty means the node user's home directory.
+  string command = 2;
+  string cwd = 3;
+  // timeout_ms caps the run; 0 means a sane default (the node-enforced cap).
+  // The node kills the process on timeout and reports a non-zero exit with
+  // error="timeout".
+  uint32 timeout_ms = 4;
+  // max_output_bytes caps stdout and stderr separately; 0 means a sane default.
+  // Each stream is truncated at the cap and the corresponding *_truncated flag
+  // is set on the result so the caller never receives unbounded output.
+  uint32 max_output_bytes = 5;
+  string node_id = 6;
+}
+
+// Node -> server: the result of a NodeHostExecRequest, correlated by request_id.
+// Modeled on ExecResult: separated streams, exit code, truncation flags, error.
+message NodeHostExecResult {
+  string request_id = 1;
+  int32 exit_code = 2;
+  bool success = 3; // exit_code == 0 and no spawn/timeout error
+  string stdout = 4;
+  string stderr = 5;
+  bool stdout_truncated = 6;
+  bool stderr_truncated = 7;
+  // error is non-empty when the command could not run at all (spawn failure,
+  // cwd missing, timeout killed the process). A non-zero exit_code from a
+  // command that DID run is NOT an error here.
+  string error = 8;
+}
+
+// NodeToolRunKind tags one chunk of a tool-run event stream.
+enum NodeToolRunKind {
+  NODE_TOOL_RUN_KIND_UNSPECIFIED = 0;
+  NODE_TOOL_RUN_KIND_STDOUT = 1;   // a stdout chunk
+  NODE_TOOL_RUN_KIND_STDERR = 2;   // a stderr chunk
+  NODE_TOOL_RUN_KIND_EXITED = 3;   // process exited (exit_code valid)
+  NODE_TOOL_RUN_KIND_STARTED = 4;  // exec succeeded (pid valid)
+}
+
+// NodeToolRunRequest: server -> node. Start a long-running external CLI.
+//
+// binary_path is the absolute path to the binary (or a bare name resolved on
+// PATH). args are passed through verbatim (no shell). env is merged onto the
+// node's environment. cwd empty = node user home. The node streams output as
+// NodeToolRunEvent frames until the process exits; stop it with NodeToolRunStop.
+//
+// max_event_bytes caps each stdout/stderr chunk; 0 = a sane default. There is
+// no overall timeout — the process runs until it exits or is stopped.
+message NodeToolRunRequest {
+  string run_id = 1;
+  string binary_path = 2;
+  repeated string args = 3;
+  map<string, string> env = 4;
+  string cwd = 5;
+  uint32 max_event_bytes = 6;
+  string node_id = 7;
+  // Monotonic runtime config revision. Events from an older revision must not
+  // overwrite the state of the replacement process after a group restart.
+  uint64 revision = 8;
+}
+
+// NodeToolRunStop: server -> node. Stop a running tool by run_id.
+message NodeToolRunStop {
+  string run_id = 1;
+  // grace_ms is the SIGTERM->SIGKILL grace window; 0 = a sane default.
+  uint32 grace_ms = 2;
+  string node_id = 3;
+}
+
+// NodeToolRunEvent: node -> server. One chunk of a tool run's output stream,
+// or the terminal exit event. Correlated by run_id.
+message NodeToolRunEvent {
+  string run_id = 1;
+  NodeToolRunKind kind = 2;
+  bytes data = 3;           // stdout/stderr chunk (empty for STARTED/EXITED)
+  int32 exit_code = 4;      // valid only for EXITED
+  string error = 5;         // spawn failure / kill error / etc.
+  uint64 revision = 6;
+  int64 pid = 7;            // valid for STARTED
+}
+
+// Lightweight process inventory carried in heartbeats so the server can
+// reconcile desired runtimes after a control-stream reconnect.
+message NodeActiveToolRun {
+  string run_id = 1;
+  uint64 revision = 2;
+  int64 pid = 3;
+}
+
+// FollowToolRunRequest: open a Connect server-stream that replays the live
+// NodeToolRunEvent stream for one run_id. The stream ends after the EXITED
+// event (or when the node disconnects). node_id identifies the owning node;
+// run_id correlates the event stream the node is already producing.
+message FollowToolRunRequest {
+  string node_id = 1;
+  string run_id = 2;
+}
+
+// Server -> node: one chunk of a host file upload. The node appends `data` to a
+// temp file at `{path}.upload-{upload_id}.tmp` starting at `offset`; on the
+// chunk with final=true it verifies total_size + sha256 and atomically renames
+// to `path`. overwrite=false rejects an existing destination. Correlated by
+// upload_id; the node cleans the temp file on failure or when a final never
+// arrives within the host exec timeout window.
+message NodeFileUploadRequest {
+  string upload_id = 1;
+  string path = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  uint64 total_size = 5;
+  string sha256 = 6;
+  bool overwrite = 7;
+  bool final = 8;
+}
+
+// Node -> server: per-chunk ack, correlated by upload_id. bytes_written is the
+// cumulative bytes persisted to the temp file after this chunk. error is
+// non-empty on any failure (path rejected, offset mismatch, checksum/size
+// mismatch, atomic rename failed); the node drops the temp file and the caller
+// must restart the upload with a fresh upload_id.
+message NodeFileUploadResult {
+  string upload_id = 1;
+  bool ok = 2;
+  uint64 bytes_written = 3;
+  string path = 4;
+  string error = 5;
+}
+
+// First upstream frame the node sends after dialing — BUT only after it has
+// received the server's NodeServerHello (which carries the authoritative time
+// the TOTP code is derived from). The node authenticates with a TOTP code
+// computed over (secret, floor(server_time/30)); node_id is the durable
+// identity minted at onboard. capabilities advertise what work it can accept.
+message NodeRegister {
+  string node_id = 1; // durable id assigned at onboard (replaces legacy token)
+  string totp_code = 2; // 6-digit RFC 6238 code over the server-time step
+  string node_name = 3; // display only; identity is node_id
+  NodeCapabilities capabilities = 4;
+  // role the node runs as. Empty/UNSPECIFIED is treated as an execution node
+  // for backward compatibility. The server pins the authoritative role at
+  // onboard time and ignores a mismatched self-report.
+  NodeRole role = 5;
+}
+
+// NodeServerHello is the FIRST downstream frame the server sends immediately
+// after the NodeConnect stream is established, before the node sends its
+// NodeRegister. It carries the server's authoritative current time so the node
+// can derive its TOTP code from the same clock the server will validate against
+// (the node must NOT use its own local clock or public NTP). server_time is
+// RFC3339Nano UTC.
+message NodeServerHello {
+  string server_time = 1;
+}
+
+message EditorModeSemantics {
+  bool can_read = 1;
+  bool can_edit_workspace = 2;
+  bool can_run_commands = 3;
+  bool requires_approval = 4;
+  bool network_access = 5;
+}
+
+message EditorModeSpec {
+  string id = 1;
+  string label = 2;
+  map<string, string> native = 3;
+  EditorModeSemantics semantics = 4;
+  string source = 5;
+}
+
+message EditorCapability {
+  string provider = 1;
+  string version = 2;
+  repeated EditorModeSpec modes = 3;
+  bool supports_interactive = 4;
+  bool supports_model_switch = 5;
+  string probe_status = 6;
+  string probe_error = 7;
+  string probed_at = 8;
+}
+
+message NodeCapabilities {
+  string os = 1; // e.g. "linux", "windows", "darwin"
+  string arch = 2; // e.g. "amd64", "arm64"
+  bool docker = 3; // can run the docker runtime (isolated)
+  repeated string providers = 4; // installed provider CLIs: claude/codex/gemini/opencode
+  map<string, string> labels = 5; // free-form capability labels for scheduling
+  repeated EditorCapability editors = 6;
+}
+
+message NodePublicIPReport {
+  uint64 config_revision = 1;
+  string ipv4 = 2;
+  string ipv6 = 3;
+  string ipv4_resolved_at = 4;
+  string ipv6_resolved_at = 5;
+  bool ipv4_disabled = 6;
+  bool ipv6_disabled = 7;
+}
+
+message NodeHeartbeat {
+  string node_id = 1;
+  repeated string active_session_ids = 2;
+  NodePublicIPReport public_ip_report = 3;
+  // Terminals still alive on this node. A host PTY outlives the control stream,
+  // so after a reconnect (or a server restart) this is how the server learns
+  // which terminals it can still reattach to instead of assuming they died.
+  repeated string active_terminal_ids = 4;
+  // Long-running tunnel client processes that survived a control-stream drop.
+  repeated NodeActiveToolRun active_tool_runs = 5;
+}
+
+message NodePublicIPLookupConfig {
+  uint64 revision = 1;
+  repeated string ipv4_urls = 2;
+  repeated string ipv6_urls = 3;
+}
+
+// Server -> node: persistent egress proxy the node uses for ALL GitHub
+// downloads (self-upgrade, runtime-upgrade, and the install bootstrap's baked
+// proxy when the node hasn't connected yet). Mirrors public_ip_lookup_config:
+// a top-level downstream frame, singleton-backed, revision-gated on apply.
+// An empty proxy_mode means "direct" (no proxy); the per-upgrade frame fields
+// override this for a single upgrade when set, otherwise the node falls back
+// to this persisted snapshot.
+message NodeProxyConfig {
+  uint64 revision = 1;           // per-node monotonic; bumped on every binding change
+  string proxy_mode = 2;        // "" | "network" | "url_prefix"
+  string proxy_url = 3;         // network: full http/https/socks5 URL with creds
+  string proxy_url_prefix = 4;  // url_prefix: reverse-proxy base prepended to URL
+  string proxy_config_id = 5;   // the bound pool-entry id echoed back ("" = direct)
+}
+
+message GetPublicIPLookupConfigRequest {}
+
+message UpdatePublicIPLookupConfigRequest {
+  repeated string ipv4_urls = 1;
+  repeated string ipv6_urls = 2;
+}
+
+message GetNodeProxyConfigRequest {
+  string node_id = 1;  // read this node's own egress-proxy binding
+}
+
+message UpdateNodeProxyConfigRequest {
+  string proxy_config_id = 1;  // an entry id in the proxy pool; "" = direct
+  string node_id = 2;          // bind the proxy to this node (per-node, not global)
+}
+
+// SetNodeLastProxy records the proxy used by a node's last *successful* upgrade
+// (so the upgrade dialog can preselect it next time). Best-effort: called only
+// after the upgrade RPC returns success; never on a failed dispatch.
+message SetNodeLastProxyRequest {
+  string node_id = 1;
+  string proxy_config_id = 2;  // "" = the upgrade ran direct
+}
+
+message SetNodeLastProxyResponse {
+  string node_id = 1;
+  string last_proxy_config_id = 2;
+}
+
+// Server's reply to a successful NodeRegister. node_id is the durable identity
+// the node uses on reconnect. server_time echoes the authoritative time the
+// server validated the code against (the node can use it for skew diagnostics).
+// online reflects the liveness dimension: a node is online once it has a live
+// connection with a fresh heartbeat (separate from the approval status field).
+message NodeRegistered {
+  string node_id = 1;
+  NodeStatus status = 2;
+  string server_time = 3; // RFC3339Nano UTC, echo of the validated time
+  bool online = 4; // liveness dimension (connection + fresh heartbeat)
+}
+
+// CreateSession downlink payload — the "下发参数包". The server sends intent and
+// addresses; the node self-provisions (git clone, download skills/plugins, write
+// provider config) locally. No file content is pushed.
+message NodeCreateSession {
+  string session_id = 1;
+  string project_id = 2;
+  string provider = 3; // editor type: claude/codex/gemini/opencode
+  string model = 4;
+  NodeGitSpec git = 5; // repo url + branch + create-branch
+  NodeLLMConfig llm = 6; // pass-through LLM config from the caller
+  repeated MCPServerSpec mcps = 7;
+  repeated SkillSpec skills = 8;
+  repeated NodePluginSpec plugins = 9;
+  repeated EnvVarSpec env = 10;
+  repeated VolumeMountSpec volumes = 11;
+  map<string, string> tags = 12;
+  string driver = 13; // "" / "docker" for the node to decide isolation
+  string guest_image = 14; // docker driver only
+  // interactive keeps the provider process running for multi-turn input
+  // (agent-compose-runtime stream). When false the session runs a single
+  // prompt turn and exits. Multi-turn currently supports the codex provider.
+  bool interactive = 15;
+  // mode selects the editor's permission/approval档位 (e.g. codex
+  // read-only/workspace-write/danger-full-access, claude
+  // default/plan/acceptEdits/bypassPermissions). Empty = the editor's default.
+  // The value is a provider-native mode string validated server-side.
+  string mode = 16;
+  // defer_start controls the create→run coupling. Default (false) preserves the
+  // backward-compatible behaviour: the node starts the editor immediately after
+  // provisioning, using the config carried in this message. When true the
+  // session stays provisioned until a StartSessionRuntime frame arrives, so the
+  // server can apply split config (LLM/MCP/skills/plugins/mode) first.
+  bool defer_start = 17;
+  // Editor/session attribution is retained for mixed-version compatibility.
+  string editor_id = 18;
+  string editor_session_id = 19;
+  // Stable product work-unit identity. Runtime session_id may be recreated while
+  // this task_id continues to own the persistent workspace and audit history.
+  string task_id = 20;
+  // env_mode selects which HOME the editor runs against — the node's own user
+  // home ("system"), a named shared environment on this node ("shared"), or a
+  // throwaway per-session home ("isolated"). Empty = isolated, preserving the
+  // existing behaviour for callers that do not set it.
+  //
+  // "system" hands the node operator's real home (ssh keys, CLI logins) to the
+  // editor, so a node must opt into it explicitly; the node refuses the mode
+  // otherwise. "shared" means concurrent sessions on the same env_id share one
+  // HOME and can overwrite each other's CLI config — that is the point of the
+  // mode, not a defect to lock against.
+  string env_mode = 21;
+  // env_id names the shared environment when env_mode is "shared"; ignored
+  // otherwise. The node resolves it to a local directory itself — the server
+  // stores only the id, never a node-local absolute path.
+  string env_id = 22;
+  // active_skills / active_plugins narrow which of the ENVIRONMENT's installed
+  // resources this task actually turns on, by name. Empty means "everything the
+  // environment has" (and is what non-shared tiers always send).
+  //
+  // This exists so removing a skill from one task cannot uninstall it from a
+  // shared environment other tasks are using: installation is an environment
+  // operation (NodeSyncEnvironment), activation is per session. The node passes
+  // these names to the runtime's per-run --skill flags and never touches the
+  // environment's files because of them.
+  repeated string active_skills = 23;
+  repeated string active_plugins = 24;
+}
+
+// Git provisioning: the node clones locally. Supports creating a fresh working
+// branch after clone (maps to GitWorkspaceConfig.CreateBranch/NewBranch).
+message NodeGitSpec {
+  string url = 1;
+  string branch = 2; // existing branch/ref to check out
+  string commit = 3;
+  bool create_branch = 4; // git checkout -b after clone
+  string new_branch = 5;
+  string username = 6;
+  string password = 7;
+  string token = 8;
+}
+
+// Opaque pass-through LLM config supplied by the task creator. agent-compose
+// does not interpret it beyond writing it into the provider's config; the
+// external LLM service owns protocol translation and key lifecycle.
+message NodeLLMConfig {
+  string endpoint = 1;
+  string api_key = 2;
+  string model = 3;
+  string protocol = 4; // optional wire hint: responses/chat/messages
+  map<string, string> headers = 5; // extra headers if the provider needs them
+  map<string, string> extra = 6; // free-form additional fields
+}
+
+message NodePluginSpec {
+  string name = 1;
+  string url = 2; // download address; node fetches it locally
+  string version = 3;
+}
+
+// ---- Split session configuration payloads. Each carries a revision so the
+// node can report which config version is on disk (applied_revision) vs. which
+// the running editor actually loaded (effective_revision), and whether a
+// restart is needed to make it live (restart_required in the ack). ----
+
+// ConfigureSessionLLM points the session's editor DIRECTLY at an LLM service
+// (no server-side proxy). The node writes the provider-specific config/env so
+// the editor talks to endpoint with api_key; a custom key can route to any
+// upstream model on the LLM service's side. Fields mirror NodeLLMConfig.
+message ConfigureSessionLLM {
+  string session_id = 1;
+  uint64 revision = 2;
+  NodeLLMConfig llm = 3;
+}
+
+// ApplySessionMCPs declares the FULL desired set of MCP servers for a session.
+// The node rewrites the editor's managed MCP config block to exactly this set
+// (empty clears it).
+message ApplySessionMCPs {
+  string session_id = 1;
+  uint64 revision = 2;
+  repeated MCPServerSpec mcps = 3;
+}
+
+// ApplySessionSkills declares the FULL desired set of skills. The node syncs
+// them into the session skills dir (empty clears it).
+message ApplySessionSkills {
+  string session_id = 1;
+  uint64 revision = 2;
+  repeated SkillSpec skills = 3;
+}
+
+// ApplySessionPlugins declares the FULL desired set of plugins. The node
+// fetches/installs them into the session plugins dir (empty clears it).
+message ApplySessionPlugins {
+  string session_id = 1;
+  uint64 revision = 2;
+  repeated NodePluginSpec plugins = 3;
+}
+
+// ConfigureSessionMode selects the editor's permission/approval mode. mode is
+// the provider-native mode string (validated server-side against the provider's
+// allowed values); the node passes it through to the runtime.
+message ConfigureSessionMode {
+  string session_id = 1;
+  uint64 revision = 2;
+  string mode = 3;
+}
+
+// StartSessionRuntime starts the editor runtime for a session created without
+// auto-start (config applied first). No-op if already running.
+message StartSessionRuntime {
+  string session_id = 1;
+}
+
+// RestartSessionRuntime stops the current editor process and starts it again
+// against the latest applied config. fresh=false keeps provider state/context;
+// fresh=true resets runtime conversation state while preserving workspace,
+// HOME/provider config, skills/plugins, and MCP config.
+message RestartSessionRuntime {
+  string session_id = 1;
+  bool fresh = 2;
+}
+
+// CollectSessionArtifacts asks the node to package the session working tree and
+// make it available for the server to pull back through the tunnel. path
+// optionally scopes to a subdir (empty = whole workspace).
+message CollectSessionArtifacts {
+  string session_id = 1;
+  string path = 2;
+}
+
+message NodeDeleteSession {
+  string session_id = 1;
+}
+
+message NodeListSessions {
+  string request_id = 1;
+}
+
+// NodeSessionInput carries a multi-turn input frame for an interactive session
+// (driver runtime "stream" mode). The server relays caller input (a new prompt
+// turn, or an end-of-input signal) to the node, which writes it to the running
+// agent-compose-runtime stream process's stdin. kind selects the frame:
+// "human_message" delivers text as the next turn; "eof" ends the conversation;
+// "cancel" aborts the current turn.
+//
+// For "human_message" the frame also carries a snapshot of the session's
+// current runtime config (model/mode/llm). The node stamps this on the frame
+// before writing it to the runtime's stdin, so the runtime re-prepares the
+// provider with the latest config on every turn instead of relying on a
+// separate hot-update protocol. This is what makes config changes
+// (model/mode/MCP/skill/plugin) take effect on the next turn with no restart.
+message NodeSessionInput {
+  string session_id = 1;
+  string kind = 2; // human_message | eof | cancel
+  string text = 3; // message body for human_message
+  string model = 4; // per-turn model snapshot
+  string mode = 5; // per-turn permission/approval mode snapshot
+  NodeLLMConfig llm = 6; // per-turn LLM endpoint/key/protocol snapshot
+  // End-to-end user-message idempotency key. The execution node/runtime ACK it
+  // via a structured input_received event and drop same-id replays.
+  string client_message_id = 7;
+  // Which execution attempt of that message this frame is. Retries of a
+  // failed/cancelled turn bump the attempt; transport replays reuse it.
+  // Dedupe key = (client_message_id, delivery_attempt).
+  uint32 delivery_attempt = 8;
+}
+
+// NodeCreateExecutionNode: server → management node. Tells the management node
+// to launch an execution node on its host. The management node runs the
+// appropriate mechanism (docker run / docker compose up / systemctl) with the
+// server address + node_id + TOTP secret baked in; the launched execution node
+// then dials the server and authenticates with a TOTP code. The management node
+// does not sit in the launched node's data path.
+message NodeCreateExecutionNode {
+  string launch_id = 1; // management-node-local handle for later teardown
+  string server_url = 2; // server address the launched node should dial
+  string node_id = 3; // durable id minted for the new node at onboard
+  string secret = 9; // TOTP secret (base32) the launched node authenticates with
+  NodeStartupMethod startup_method = 4; // how to launch it on this host
+  string node_name = 5; // desired name for the launched node
+  string guest_image = 6; // container image for docker/docker-compose methods
+  repeated EnvVarSpec env = 7; // extra env for the launched node process
+  map<string, string> labels = 8; // capability labels to pass through
+}
+
+message NodeDeleteExecutionNode {
+  string launch_id = 1;
+}
+
+// SendSessionInputRequest is the server-side unary API for relaying a turn into
+// an interactive session. The model/mode/llm fields let the caller pass the
+// session's latest config snapshot so the turn executes under current config;
+// when left empty the node fills them from its own session mirror.
+message SendSessionInputRequest {
+  string session_id = 1;
+  string kind = 2;
+  string text = 3;
+  string model = 4;
+  string mode = 5;
+  NodeLLMConfig llm = 6;
+  // Echoed into NodeSessionInput; see that message.
+  string client_message_id = 7;
+  uint32 delivery_attempt = 8;
+}
+
+message SendSessionInputResponse {
+  bool accepted = 1;
+  string error = 2;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reverse-proxy tunnel (phase 4)
+//
+// The server exposes session-local HTTP services (jupyter, a files endpoint,
+// arbitrary ports) by reverse-proxying over the node's already-established
+// NodeConnect stream — the node dials out, so the server cannot connect inward.
+// A tunnel is one HTTP request/response exchange, correlated by tunnel_id and
+// multiplexed over the single bidi stream alongside session commands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// NodeTunnelRequest: server → node. Asks the node to forward one HTTP request to
+// a session-local service and stream the response back.
+message NodeTunnelRequest {
+  string tunnel_id = 1;
+  string session_id = 2;
+  string service = 3; // logical target on the node: "jupyter" | "files" | port name
+  string method = 4;
+  string path = 5; // request path + optional query
+  map<string, string> headers = 6;
+  bytes body = 7;
+  bool body_complete = 8; // false if more request-body chunks follow (streaming upload)
+}
+
+// NodeTunnelResponse: node → server. The node's forwarded HTTP response, sent as
+// one or more frames (headers first, then body chunks, then done).
+message NodeTunnelResponse {
+  string tunnel_id = 1;
+  int32 status = 2; // set on the first frame (headers)
+  map<string, string> headers = 3; // set on the first frame
+  bytes body = 4; // body chunk (may be empty)
+  bool done = 5; // true on the final frame
+  string error = 6; // non-empty if the node failed to reach the local service
+}
+
+// Streamed session output the node buffers locally and flushes back in order.
+// offset lets the server dedupe/resume after a reconnect (the local queue is
+// FIFO; offset is the byte anchor, mirroring appendProjectRunLogChunk).
+message NodeSessionOutput {
+  string session_id = 1;
+  bytes data = 2;
+  StdioStream stream = 3;
+  uint64 offset = 4;
+  string created_at = 5;
+}
+
+message NodeSessionResult {
+  string session_id = 1;
+  int32 exit_code = 2;
+  bool success = 3;
+  string error = 4;
+  string result_json = 5;
+}
+
+// Progress of a session's preparation, reported per step as the node works
+// through it.
+//
+// Why this exists: session creation used to be a black box. The node prepared
+// the workspace, cloned the repo, resolved the agent runtime and started it all
+// inside one call, and reported only a single pass/fail at the end. When a task
+// failed to start, neither the operator nor the user could tell *which* step
+// broke — "exit code 1" is the same answer for "the repo is unreachable" and
+// "the runtime is not installed". These frames make each step observable, so a
+// failure names its own phase.
+//
+// Ordering is the natural execution order (see SessionStage). Every stage that
+// runs emits exactly one frame: ok=true on success, ok=false with `error` set on
+// failure — after which no further stage frames arrive for that session. Frames
+// are advisory: the server persists them for display, and a node that never
+// sends them (older build) still works, it just cannot say where it stopped.
+message NodeSessionStage {
+  string session_id = 1;
+  SessionStage stage = 2;
+  bool ok = 3;
+  // Human-readable detail for this step: on success a short note ("cloned
+  // branch main"), on failure the underlying reason. Never carries credentials —
+  // the node redacts URL userinfo before filling this in.
+  string detail = 4;
+  // Set only when ok=false: the error that stopped this stage.
+  string error = 5;
+  string created_at = 6;
+}
+
+// The preparation steps of a session, in execution order.
+enum SessionStage {
+  SESSION_STAGE_UNSPECIFIED = 0;
+  // Creating the session's working/runtime/home directories.
+  SESSION_STAGE_WORKSPACE_PREPARE = 1;
+  // Cloning (or reusing) the bound git repository into the working tree.
+  SESSION_STAGE_GIT_CLONE = 2;
+  // Verifying the node can actually launch the agent runtime before trying.
+  SESSION_STAGE_RUNTIME_PREFLIGHT = 3;
+  // Spawning the provider/runtime process.
+  SESSION_STAGE_RUNTIME_START = 4;
+  // The runtime is up and the session is live.
+  SESSION_STAGE_RUNNING = 5;
+  // Writing the session's LLM/MCP config and downloading the skills + plugins
+  // it was granted. Numbered after RUNNING because enum values are wire
+  // identifiers and may never be renumbered; display order is defined
+  // server-side (task_service._RUNTIME_STAGES), where it sits between the clone
+  // and the pre-flight — which is where it actually runs.
+  SESSION_STAGE_RESOURCE_SYNC = 6;
+}
+
+// Ack for a downstream command (create/delete/list), correlated by the
+// server_frame_id the node received.
+message NodeCommandAck {
+  string server_frame_id = 1;
+  bool ok = 2;
+  string error = 3;
+  repeated NodeSessionSummary sessions = 4; // populated for ListSessions acks
+  // ---- Config-command acks (Configure*/Apply*/Mode). ----
+  // applied_revision is the config revision the node just persisted to disk for
+  // the target session. effective_revision is the revision the currently running
+  // editor process actually loaded (0/empty when nothing is running yet).
+  // restart_required is true when applied_revision is newer than
+  // effective_revision, i.e. the change is on disk but the running editor must be
+  // restarted (RestartSessionRuntime) for it to take effect.
+  uint64 applied_revision = 5;
+  uint64 effective_revision = 6;
+  bool restart_required = 7;
+  // ---- ManageEditor acks. ----
+  // Version string the node probed after a successful install/upgrade (e.g.
+  // "1.2.3"). Empty when the command failed or the frame was not ManageEditor.
+  string editor_version = 8;
+  // ---- InspectEnvironment ack. ----
+  // What the node observed physically installed in an environment HOME. Empty
+  // for non-inspect acks. MCP never appears here (it is config, not on disk).
+  repeated NodeEnvironmentEntry environment_inventory = 9;
+  // ---- InspectSystemEnv / SyncSystemEnv acks. ----
+  // What the node observed in the OPERATOR's HOME (system env). Inspect fills it
+  // with the whole inventory; a sync ack fills it with the entries it just
+  // installed/skipped/removed so the caller can report per-entry outcomes
+  // without a second round trip. Unlike environment_inventory this DOES include
+  // MCP entries (read from the provider MCP config), because the point is to
+  // show what a system-env session actually gets.
+  repeated NodeSystemEnvEntry system_env_inventory = 10;
+}
+
+message NodeSessionSummary {
+  string session_id = 1;
+  string project_id = 2;
+  string provider = 3;
+}
+
+message NodeError {
+  string code = 1;
+  string message = 2;
+  bool terminal = 3;
+}
+
+message ListNodesRequest {
+  NodeStatus status = 1; // optional filter; UNSPECIFIED returns all
+}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  string node_name = 2;
+  NodeStatus status = 3;
+  NodeCapabilities capabilities = 4;
+  string connected_at = 5;
+  string last_heartbeat_at = 6;
+  bool connected = 7;
+  repeated string active_session_ids = 8;
+  NodeRole role = 9;
+  NodeStartupMethod startup_method = 10;
+  string manager_node_id = 11; // set for nodes launched by a management node
+  // online is the liveness dimension (distinct from approval status): true when
+  // the node currently has a live connection with a heartbeat newer than the
+  // timeout. A node can be approved but offline.
+  bool online = 12;
+  NodeCapacity capacity = 13;
+  // proxy_config_id is this node's bound egress-proxy pool entry ("" = direct).
+  // The admin picks one at onboard time or on the node detail page; the server
+  // pushes the resolved snapshot to the node and bakes it into the install
+  // script. Per-node, NOT a global singleton.
+  string proxy_config_id = 14;
+  // last_proxy_config_id is the proxy used by this node's last *successful*
+  // upgrade; the upgrade dialog preselects it (the admin can keep/change/direct).
+  string last_proxy_config_id = 15;
+}
+
+message NodeCapacity {
+  int32 max_sessions = 1;
+  double cpu_total = 2;
+  int64 memory_total = 3;
+}
+
+message SetNodeCapacityRequest {
+  string node_id = 1;
+  NodeCapacity capacity = 2;
+}
+
+message SetNodeCapacityResponse {
+  string node_id = 1;
+  NodeCapacity capacity = 2;
+}
+
+message MoveNodeRequest {
+  string node_id = 1;
+  string manager_node_id = 2;
+}
+
+message MoveNodeResponse {
+  NodeInfo node = 1;
+}
+
+message ManageEditorRequest {
+  string node_id = 1;
+  string editor = 2;
+  EditorAction action = 3;
+}
+
+message ManageEditorResponse {
+  string node_id = 1;
+  string editor = 2;
+  string action = 3;
+  string version = 4;
+}
+
+message ManageNodeEnvironmentRequest {
+  string node_id = 1;
+  string env_id = 2;
+  EnvironmentAction action = 3;
+}
+
+message ManageNodeEnvironmentResponse {
+  string node_id = 1;
+  string env_id = 2;
+  string action = 3;
+  // exists is set on CREATE acks: false means the node refused (e.g. the env
+  // mode is not enabled on this node, or the directory could not be created).
+  bool exists = 4;
+}
+
+message SyncNodeEnvironmentRequest {
+  string node_id = 1;
+  string env_id = 2;
+  repeated SkillSpec skills = 3;
+  repeated NodePluginSpec plugins = 4;
+}
+
+message SyncNodeEnvironmentResponse {
+  string node_id = 1;
+  string env_id = 2;
+  bool ok = 3;
+}
+
+message InspectNodeEnvironmentRequest {
+  string node_id = 1;
+  string env_id = 2;
+}
+
+message InspectNodeEnvironmentResponse {
+  string node_id = 1;
+  string env_id = 2;
+  repeated NodeEnvironmentEntry installed = 3;
+}
+
+// ── System environment (the node operator's real HOME) RPCs ──────────────────
+
+message InspectNodeSystemEnvRequest {
+  string node_id = 1;
+  string provider = 2; // empty = every known discovery path
+}
+
+message InspectNodeSystemEnvResponse {
+  string node_id = 1;
+  repeated NodeSystemEnvEntry installed = 2;
+}
+
+message SyncNodeSystemEnvRequest {
+  string node_id = 1;
+  repeated SkillSpec skills = 2;
+  repeated NodePluginSpec plugins = 3;
+  bool overwrite = 4;
+  repeated string remove = 5;
+}
+
+message SyncNodeSystemEnvResponse {
+  string node_id = 1;
+  bool ok = 2;
+  // Per-entry outcome of this call (installed / skipped / removed), so the
+  // console can tell the user exactly what happened rather than just "ok".
+  repeated NodeSystemEnvEntry touched = 3;
+}
+
+message ArchiveNodeSystemEnvResourceRequest {
+  string node_id = 1;
+  string kind = 2;
+  string name = 3;
+}
+
+message ArchiveNodeSystemEnvResourceResponse {
+  string node_id = 1;
+  string kind = 2;
+  string name = 3;
+  bool ok = 4;
+}
+
+message SelfUpgradeNodeRequest {
+  string node_id = 1;
+}
+
+message SelfUpgradeNodeResponse {
+  string node_id = 1;
+  string target_version = 2;
+  string download_url = 3;
+  string sha256 = 4;
+}
+
+message RuntimeUpgradeNodeRequest {
+  string node_id = 1;
+}
+
+message RuntimeUpgradeNodeResponse {
+  string node_id = 1;
+  string target_version = 2;
+  string download_url = 3;
+  string sha256 = 4;
+}
+
+message HostExecRequest {
+  string node_id = 1;
+  string command = 2;
+  string cwd = 3;
+  uint32 timeout_ms = 4;
+  uint32 max_output_bytes = 5;
+}
+
+message HostExecResponse {
+  string request_id = 1;
+  int32 exit_code = 2;
+  bool success = 3;
+  string stdout = 4;
+  string stderr = 5;
+  bool stdout_truncated = 6;
+  bool stderr_truncated = 7;
+  string error = 8;
+}
+
+// Client -> NodeService: one chunk of a host file upload. The server forwards
+// the chunk to the target node's daemon over the node protocol; node_id selects
+// the approved, online node advertising host_exec capability.
+message HostFileUploadRequest {
+  string node_id = 1;
+  string upload_id = 2;
+  string path = 3;
+  uint64 offset = 4;
+  bytes data = 5;
+  uint64 total_size = 6;
+  string sha256 = 7;
+  bool overwrite = 8;
+  bool final = 9;
+}
+
+// NodeService -> client: per-chunk ack forwarded from the node daemon.
+message HostFileUploadResponse {
+  string upload_id = 1;
+  bool ok = 2;
+  uint64 bytes_written = 3;
+  string path = 4;
+  string error = 5;
+}
+
+message ApproveNodeRequest {
+  string node_id = 1;
+}
+
+message ApproveNodeResponse {
+  NodeInfo node = 1;
+}
+
+message RevokeNodeRequest {
+  string node_id = 1;
+}
+
+message RevokeNodeResponse {
+  NodeInfo node = 1;
+}
+
+message DeleteNodeRequest {
+  string node_id = 1;
+  // force permits deleting a node that is currently online (connected). Without
+  // it an online node is refused so an operator does not yank a node mid-work by
+  // accident. A management node that still owns execution nodes is always
+  // refused regardless of force.
+  bool force = 2;
+}
+
+message DeleteNodeResponse {
+  bool deleted = 1;
+}
+
+message OnboardNodeRequest {
+  NodeRole role = 1; // execution (default) | management
+  NodeStartupMethod startup_method = 2; // selects the install script handed back
+  string node_name = 3; // optional desired name
+  map<string, string> labels = 4; // optional capability labels
+  // manager_node_id names the management node this execution node is owned by.
+  // REQUIRED for the execution role: it must name an existing management node
+  // (which may be a passive one created purely as an ownership container — see
+  // OnboardNode for the management role). An empty or non-management id is
+  // rejected; there is no implicit fallback owner. Ignored for the management
+  // role. The server pins ownership at onboard time; the execution node cannot
+  // choose or change its owner (prevents horizontal privilege escalation).
+  string manager_node_id = 5;
+  // proxy_config_id names the proxy-pool entry this node uses for GitHub
+  // downloads (self-upgrade / runtime-upgrade / install bootstrap). "" = direct.
+  // Picked by the admin at onboard; can be changed later on the node detail
+  // page. Per-node binding; "" falls back to direct.
+  string proxy_config_id = 6;
+}
+
+message OnboardNodeResponse {
+  string node_id = 1; // the pending node's durable id
+  // secret is the node's TOTP secret (base32), shown ONCE at onboard. The node
+  // is provisioned with node_id + secret and derives a TOTP code from it on
+  // every connect; the server stores only an encrypted copy. There is no
+  // one-time token anymore — the (node_id, secret) pair is the durable identity.
+  string secret = 2;
+  // install_command is a ready-to-paste shell command that runs the install
+  // script with node_id + secret injected via the environment (kept out of
+  // argv/URL). script_url is the raw script endpoint.
+  string install_command = 3;
+  string script_url = 4;
+  NodeInfo node = 5;
+  // otpauth_uri is a standard otpauth:// provisioning URI (base32 secret) so an
+  // operator can, if they want, load the same secret into an authenticator app.
+  string otpauth_uri = 7;
+  // launched is true when the resolved owner is a real, connected management
+  // node that the server told to launch this execution node itself. When false
+  // the operator runs install_command by hand (synthetic/offline manager).
+  bool launched = 6;
+}
+
+message RevokeOnboardNodeRequest {
+  string node_id = 1;
+}
+
+message RevokeOnboardNodeResponse {
+  bool deleted = 1; // true if the pending record was removed (never registered)
+  bool revoked = 2; // true if an already-registered node was revoked instead
+  NodeInfo node = 3; // populated when revoked (record retained for audit)
+}
+
+// DispatchSessionRequest places a session on a node. If node_id is empty the
+// server selects an approved, connected node (phase-1: first eligible). The
+// session payload is the CreateSession "下发参数包"; session_id may be empty to
+// have the server mint one.
+message DispatchSessionRequest {
+  string node_id = 1;
+  NodeCreateSession session = 2;
+}
+
+message DispatchSessionResponse {
+  string session_id = 1;
+  string node_id = 2;
+  bool accepted = 3;
+  string error = 4;
+}
+
+// ── Split-config control request/response. Each request names the session
+// (the server routes to its owning node); the LLM is the server's chance to
+// map a custom key/model. NodeSessionConfigAck echoes the node's config ack. ──
+
+message ConfigureNodeSessionLLMRequest {
+  string session_id = 1;
+  NodeLLMConfig llm = 2;
+}
+
+message ApplyNodeSessionMCPsRequest {
+  string session_id = 1;
+  repeated MCPServerSpec mcps = 2;
+}
+
+message ApplyNodeSessionSkillsRequest {
+  string session_id = 1;
+  repeated SkillSpec skills = 2;
+}
+
+message ApplyNodeSessionPluginsRequest {
+  string session_id = 1;
+  repeated NodePluginSpec plugins = 2;
+}
+
+message ConfigureNodeSessionModeRequest {
+  string session_id = 1;
+  string mode = 2;
+}
+
+message StartNodeSessionRuntimeRequest {
+  string session_id = 1;
+}
+
+message RestartNodeSessionRuntimeRequest {
+  string session_id = 1;
+  bool fresh = 2;
+}
+
+message CollectNodeSessionArtifactsRequest {
+  string session_id = 1;
+  string path = 2;
+}
+
+// NodeSessionConfigAck is the client-facing projection of the node's
+// NodeCommandAck for a config command: whether it was accepted, the revision
+// the node persisted, the revision currently live in the editor, and whether a
+// runtime restart is required to make the applied config effective.
+message NodeSessionConfigAck {
+  bool ok = 1;
+  string error = 2;
+  uint64 applied_revision = 3;
+  uint64 effective_revision = 4;
+  bool restart_required = 5;
+}
+
+message DeleteNodeSessionRequest {
+  string session_id = 1;
+}
+
+message DeleteNodeSessionResponse {
+  bool deleted = 1;
+  string error = 2;
+}
+
+message FollowNodeSessionRequest {
+  string session_id = 1;
+}
+
+// NodeSessionEvent is the server-stream projection of a dispatched session's
+// upstream frames: interleaved output chunks, structured events, and a terminal
+// result.
+message NodeSessionEvent {
+  oneof event {
+    NodeSessionOutput output = 1;
+    NodeSessionResult result = 2;
+    // Structured event parsed from the runtime NDJSON stream (tool call,
+    // reasoning, progress, todo, file change, per-agent status). Additive
+    // alongside the raw output byte stream.
+    NodeSessionEventStructured structured = 3;
+  }
+}
+
+// NodeSessionEventStructured is a single structured event the node parsed from
+// the runtime's NDJSON output. It is intentionally schema-light: event_type and
+// item_type carry the runtime's own vocabulary (agent_event/agent_turn_completed,
+// item.type = agent_message/reasoning/command_execution/mcp_tool_call/
+// file_change/todo_list/web_search/…), and payload_json carries the raw event
+// object so the server/UI can render specifics without the node needing to model
+// every provider's schema. agent_id is reserved for per-subagent attribution
+// (populated when the provider surfaces subagent events; empty otherwise).
+message NodeSessionEventStructured {
+  string session_id = 1;
+  uint64 seq = 2; // runtime frame seq, monotonic per session
+  string event_type = 3; // runtime frame type: agent_event/agent_turn_completed/result/error
+  string item_type = 4; // for agent_event: the item.type (agent_message/reasoning/…)
+  string agent_id = 5; // per-subagent attribution; empty for the root agent
+  string payload_json = 6; // raw event object as JSON
+  string created_at = 7; // RFC3339Nano UTC when the node observed it
+  // Canonical additive envelope. Legacy event_type/item_type/agent_id remain
+  // for compatibility; consumers should use these explicit fields when set.
+  string logical_event_id = 8;
+  string event_name = 9;
+  string event_kind = 10;
+  string tool_name = 11;
+  string subagent_id = 12;
+  string phase = 13;
+  string status = 14;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Node forward HTTP proxy (node mode).
+// The server wants a channel/API request to exit from the node's IP. It sends
+// the node one NodeProxyRequest describing the full HTTP request (method, url,
+// headers, body); the node performs the outbound request itself (so TLS is
+// terminated on the node, with the node's own HTTP client) and streams the
+// response back as NodeTunnelResponse frames, multiplexed over the NodeConnect
+// stream by tunnel_id (reusing the reverse-proxy response so the dispatch path
+// is shared). The node applies no business logic — it is a pure I/O relay.
+// ───────────────────────────────────────────────────────────────────────────────
+
+// Server -> node: perform one HTTP request to an absolute URL.
+message NodeProxyRequest {
+  string tunnel_id = 1;
+  string method = 2;
+  string url = 3;                    // absolute URL (https://api.example.com/v1/…)
+  map<string, string> headers = 4;
+  bytes body = 5;
+  bool body_complete = 6;            // false if more request-body chunks follow (streaming upload)
+}
+
+// ─── iOS host management ───────────────────────────────────────────────────
+//
+// An ios_host node drives N physical iPhones over go-ios (USB or LAN) and
+// speaks WebDriverAgent to each. These frames are the *host management* plane:
+// device discovery, adoption, per-device config, and the WDA build/sign/install
+// jobs. They deliberately do NOT touch the device-control v0 protocol — each
+// adopted iPhone still gets its own device-control WebSocket and its own
+// credential, exactly like an Android device, so the wire the server sees for
+// UI commands is unchanged.
+//
+// Gating: the server only sends these to a node whose registration labels carry
+// ios_mgmt=true. An older node-ios logs-and-drops unknown frames, and an older
+// server simply never sends them, so both directions degrade safely.
+
+// Server -> node: re-enumerate attached iPhones. Acked with NodeCommandAck; the
+// inventory itself arrives as a NodeIosDevicesReport.
+message NodeIosDiscover {
+  string request_id = 1;
+}
+
+// IosConnectionType mirrors go-ios's device ConnectionType, which is how a host
+// distinguishes a USB-tethered iPhone from one reachable over LAN WiFi.
+enum IosConnectionType {
+  IOS_CONNECTION_TYPE_UNSPECIFIED = 0;
+  IOS_CONNECTION_TYPE_USB = 1;
+  IOS_CONNECTION_TYPE_NETWORK = 2;
+}
+
+// IosWdaState is the lifecycle of WebDriverAgent on one device, as observed by
+// the host. This is deliberately separate from "device online": a device can be
+// physically present with no WDA installed, or have a ready WDA whose
+// provisioning profile expires next week.
+enum IosWdaState {
+  IOS_WDA_STATE_UNSPECIFIED = 0;
+  // No signed WDA runner installed (or the host cannot see one).
+  IOS_WDA_STATE_MISSING = 1;
+  // A WDA job is currently working on this device.
+  IOS_WDA_STATE_PREPARING = 2;
+  // Runner installed, launched, port forwarded, /status answering, session OK.
+  IOS_WDA_STATE_READY = 3;
+  // Ready, but the provisioning profile expires soon (renewal window).
+  IOS_WDA_STATE_RENEWAL_DUE = 4;
+  // The provisioning profile has expired; the runner will not launch.
+  IOS_WDA_STATE_EXPIRED = 5;
+  // The last WDA job or launch attempt failed; last_error carries why.
+  IOS_WDA_STATE_FAILED = 6;
+}
+
+// One physically discovered iPhone as the host sees it. Everything here is
+// observed on the host — the server never asks a user to type a UDID.
+message NodeIosDevice {
+  string udid = 1;
+  string name = 2;                        // device name as set by its owner
+  string model = 3;                       // hardware model identifier
+  string product_version = 4;             // iOS version
+  IosConnectionType connection_type = 5;
+  // present is false for a device the host knows about (claimed, credential on
+  // disk) but which is currently unplugged / off the network.
+  bool present = 6;
+  // claimed is true once this host holds a device-control credential for the
+  // UDID; device_id is the server-side device identity in that case.
+  bool claimed = 7;
+  string device_id = 8;
+  // Whether the device-control WebSocket for this device is currently up. A
+  // claimed+present device can still be offline (revoked token, WDA down).
+  bool device_control_online = 9;
+  IosWdaState wda_state = 10;
+  string wda_bundle_id = 11;
+  // RFC3339 expiry of the signing profile backing the installed WDA, when the
+  // host could parse it; empty when unknown.
+  string profile_expires_at = 12;
+  string last_error = 13;
+  // Which NodeIosConfigureDevice revision this device is actually running.
+  int64 config_revision_applied = 14;
+  // Whether the device has Developer Mode enabled (iOS 16+). A false value with
+  // present=true is the most common reason WDA cannot be launched.
+  bool developer_mode_enabled = 15;
+}
+
+// Node -> server: the host's full device inventory. Always a complete snapshot
+// (not a delta) so a reconnecting server converges in one frame; snapshot_revision
+// increases monotonically per host so an out-of-order delivery is detectable.
+message NodeIosDevicesReport {
+  string request_id = 1;                  // echoes NodeIosDiscover, empty when unsolicited
+  int64 snapshot_revision = 2;
+  string reported_at = 3;                 // RFC3339
+  repeated NodeIosDevice devices = 4;
+  // Host-level diagnostics: set when the host cannot enumerate at all (usbmuxd
+  // not running, Apple Devices service missing on Windows, …). devices is then
+  // empty and the UI must say "cannot see devices", not "no devices".
+  string enumerate_error = 5;
+}
+
+// Server -> node: adopt one discovered iPhone.
+//
+// The pairing_code is a one-time device-control code the server just minted; the
+// host redeems it over plain HTTP (the same endpoint the Android app uses) and
+// stores the resulting long-lived token in a 0600 file. Sending the code — not
+// the token — keeps the credential-minting path identical for every device
+// platform and means this frame carries no long-lived secret.
+message NodeIosClaimDevice {
+  string request_id = 1;
+  string udid = 2;
+  string device_label = 3;                // human label; defaults to the device name
+  string pairing_code = 4;
+  string server_url = 5;                   // device-control base URL to redeem against
+  string transport = 6;                    // "usb" | "network"
+  // Optional WDA identity to store with the device up front, so a later job has
+  // it without a second round trip. Empty is fine: the WDA job carries its own.
+  string wda_bundle_id = 7;
+  string xctest_config_name = 8;
+  int64 config_revision = 9;
+}
+
+// Server -> node: stop driving a device.
+message NodeIosReleaseDevice {
+  string request_id = 1;
+  string device_id = 2;
+  string udid = 3;
+  // Delete the local 0600 credential too. False keeps it so the device can be
+  // resumed without re-pairing (used for a temporary disable).
+  bool delete_credential = 4;
+  // Also uninstall the WDA runner from the device. Off by default: the runner is
+  // expensive to re-sign and harmless to leave installed.
+  bool uninstall_wda = 5;
+}
+
+// Server -> node: desired per-device configuration. Revision-gated.
+message NodeIosConfigureDevice {
+  string request_id = 1;
+  string device_id = 2;
+  string udid = 3;
+  int64 config_revision = 4;
+  string transport = 5;                    // "usb" | "network"
+  string wda_bundle_id = 6;
+  string xctest_config_name = 7;
+  // Pin the host-side forwarded port. 0 (recommended) lets the host allocate a
+  // free port per device, which is what makes many iPhones on one host safe.
+  int32 host_wda_port = 8;
+  // Whether the host may start a WDA job on its own (e.g. after detecting an
+  // expired profile) instead of waiting for a server-scheduled job.
+  bool auto_prepare = 9;
+  // Renewal window: report RENEWAL_DUE this many days before profile expiry.
+  int32 renew_before_days = 10;
+}
+
+// IosWdaJobAction selects what a WDA job should do. Each action is a prefix of
+// the full pipeline, so PREPARE implies download+sign+install+launch+verify.
+enum IosWdaJobAction {
+  IOS_WDA_JOB_ACTION_UNSPECIFIED = 0;
+  // Full first-time setup: fetch artifact, sign, install, launch, verify.
+  IOS_WDA_JOB_ACTION_PREPARE = 1;
+  // Re-sign with a fresh profile and reinstall, keeping the same artifact.
+  // Used for the 7-day (free) / yearly (paid) profile expiry.
+  IOS_WDA_JOB_ACTION_RENEW = 2;
+  // Reinstall the already-signed artifact (recover a deleted/broken runner).
+  IOS_WDA_JOB_ACTION_REINSTALL = 3;
+  // Install a signed IPA the user supplied themselves (free Apple ID path,
+  // where automated signing is impossible). No signing stage runs.
+  IOS_WDA_JOB_ACTION_INSTALL_SIGNED = 4;
+}
+
+// IosSigningMode selects where the signing identity comes from.
+enum IosSigningMode {
+  IOS_SIGNING_MODE_UNSPECIFIED = 0;
+  // App Store Connect API key (paid Apple Developer Program). The host
+  // registers the UDID, provisions a profile and signs — fully automatable,
+  // including renewal.
+  IOS_SIGNING_MODE_APP_STORE_CONNECT = 1;
+  // Caller-supplied p12 + mobileprovision. The host only signs; obtaining and
+  // renewing the profile is the operator's job.
+  IOS_SIGNING_MODE_MANUAL_P12 = 2;
+  // The artifact is already signed; the host only installs it. This is the only
+  // supported free-Apple-ID path — Apple exposes no API to automate it.
+  IOS_SIGNING_MODE_PRESIGNED = 3;
+}
+
+// Signing material for one job.
+//
+// SECURITY: these are high-value credentials. They travel only over the
+// authenticated NodeConnect stream (never a user-facing API), are written 0600
+// on the host, and must never appear in job events, logs or acks. The server
+// stores them in its secret store and sends them per job rather than letting
+// the host hold them indefinitely.
+message NodeIosSigningMaterial {
+  IosSigningMode mode = 1;
+  // App Store Connect API key (mode = APP_STORE_CONNECT).
+  string asc_key_id = 2;
+  string asc_issuer_id = 3;
+  bytes asc_private_key = 4;               // the .p8 contents
+  // Reuse an existing certificate instead of creating one. Apple allows only
+  // one current iOS Development certificate per account, so a fleet must share
+  // it: the first job creates it, later jobs pass its id here and mint only a
+  // per-device profile.
+  string certificate_id = 5;
+  bytes certificate_p12 = 6;               // the P12 matching certificate_id
+  string p12_password = 7;
+  // Pre-provisioned profile (mode = MANUAL_P12).
+  bytes provisioning_profile = 8;
+}
+
+// The WDA artifact to install. The server resolves an approved artifact to a
+// URL + digest; the host downloads and verifies before touching the device, so
+// a node never installs an unpinned third-party binary.
+message NodeIosWdaArtifact {
+  string artifact_id = 1;
+  string url = 2;
+  string sha256 = 3;
+  int64 size_bytes = 4;
+  string version = 5;
+  // Bundle id to give the signed runner. Free/dev signing cannot reuse another
+  // team's bundle id, so a per-team id is rewritten in at signing time.
+  string target_bundle_id = 6;
+  string xctest_config_name = 7;
+}
+
+// Server -> node: run one WDA job.
+message NodeIosWdaJobRequest {
+  string job_id = 1;
+  string request_id = 2;
+  string device_id = 3;
+  string udid = 4;
+  IosWdaJobAction action = 5;
+  NodeIosWdaArtifact artifact = 6;
+  NodeIosSigningMaterial signing = 7;
+  int64 config_revision = 8;
+  // Reinstall even when the host believes the runner is already present.
+  bool force = 9;
+  // Try to enable Developer Mode on the device as part of the job. The device
+  // still shows a confirmation prompt and reboots, so this cannot be silent.
+  bool enable_developer_mode = 10;
+}
+
+// Server -> node: cancel a job at the next stage boundary.
+message NodeIosJobCancel {
+  string request_id = 1;
+  string job_id = 2;
+}
+
+// IosJobStage names the pipeline step a job is in. The server renders these
+// verbatim, so a stuck job says which step is stuck instead of "preparing".
+enum IosJobStage {
+  IOS_JOB_STAGE_UNSPECIFIED = 0;
+  IOS_JOB_STAGE_QUEUED = 1;
+  IOS_JOB_STAGE_DOWNLOADING = 2;
+  IOS_JOB_STAGE_VERIFYING = 3;            // sha256 + archive/bundle shape
+  IOS_JOB_STAGE_ENABLING_DEVELOPER_MODE = 4;
+  IOS_JOB_STAGE_ENSURING_DEVICE = 5;      // register UDID with Apple
+  IOS_JOB_STAGE_ENSURING_BUNDLE_ID = 6;
+  IOS_JOB_STAGE_PREPARING_CERTIFICATE = 7;
+  IOS_JOB_STAGE_CREATING_PROFILE = 8;
+  IOS_JOB_STAGE_SIGNING = 9;
+  IOS_JOB_STAGE_INSTALLING = 10;
+  IOS_JOB_STAGE_MOUNTING_DEVELOPER_IMAGE = 11;
+  IOS_JOB_STAGE_STARTING_RUNNER = 12;
+  IOS_JOB_STAGE_FORWARDING_PORT = 13;
+  IOS_JOB_STAGE_WAITING_READY = 14;       // polling WDA /status
+  IOS_JOB_STAGE_VERIFYING_CONTROL = 15;   // session + source smoke test
+  IOS_JOB_STAGE_COMPLETED = 16;
+  IOS_JOB_STAGE_FAILED = 17;
+  IOS_JOB_STAGE_CANCELLED = 18;
+}
+
+// Node -> server: one progress step of a WDA job.
+//
+// message/detail are operator-facing text and MUST be free of signing material.
+message NodeIosJobEvent {
+  string job_id = 1;
+  int64 seq = 2;                           // monotonic per job
+  IosJobStage stage = 3;
+  string message = 4;
+  // 0-100 where the stage can estimate it (download), else 0.
+  int32 percent = 5;
+  string reported_at = 6;                  // RFC3339
+  // Redacted tail of whatever external tool this stage ran (runner log, Apple
+  // API error). Bounded by the host.
+  string log_tail = 7;
+}
+
+// Node -> server: terminal outcome of a WDA job. Sent exactly once per job.
+message NodeIosJobResult {
+  string job_id = 1;
+  bool ok = 2;
+  // Stable machine code for the UI to branch on: "sha256_mismatch",
+  // "asc_unauthorized", "developer_mode_required", "device_not_present",
+  // "profile_expired", "install_failed", "runner_failed", "wda_unreachable",
+  // "cancelled", …
+  string error_code = 3;
+  string error_message = 4;
+  // Whether retrying the same job could plausibly succeed (transient network /
+  // device asleep) versus needing operator action (bad credentials).
+  bool retryable = 5;
+  IosJobStage stage_reached = 6;
+  // On success: what is now installed and until when it is valid.
+  string wda_bundle_id = 7;
+  string profile_expires_at = 8;           // RFC3339
+  string artifact_sha256 = 9;
+  string artifact_version = 10;
+  // The certificate the job used/created, so later per-device jobs can reuse it
+  // instead of tripping Apple's one-certificate-per-account limit.
+  string certificate_id = 11;
+  int64 config_revision = 12;
+}
+
+
+
+// ─── Generic node build pipeline ────────────────────────────────────────────
+//
+// One build = clone a pinned source + exec an ordered step list + glob one
+// artifact + upload it to a one-time server endpoint. The server renders the
+// steps (recipe semantics live server-side); the node is a dumb, sandboxed
+// executor so the same frame serves any toolchain.
+
+// Server -> node: run one build.
+message NodeBuildRequest {
+  string build_id = 1;
+  // Recipe identity for logging/UI only; the node does not interpret it.
+  string recipe_kind = 2;                  // "xcode_wda", "docker_image", …
+  string source_url = 3;                    // git URL, pinned by source_ref
+  string source_ref = 4;                    // commit SHA or tag
+  // Ordered shell commands executed in the workspace root. The node does not
+  // parse them — each runs via the platform shell, output is captured (bounded)
+  // and streamed as NodeBuildEvent.
+  repeated string steps = 5;
+  // Single glob relative to the workspace root matching the artifact to
+  // upload. First match wins.
+  string artifact_glob = 6;
+  // One-time upload endpoint + token (bound to build_id, short TTL). The node
+  // POSTs the artifact directly here so large binaries never ride the
+  // NodeConnect control stream.
+  string upload_url = 7;
+  string upload_token = 8;
+  // Whole-build budget; the node cancels at the step boundary when exceeded.
+  int64 timeout_seconds = 9;
+  string artifact_name = 10;
+  string artifact_version = 11;
+}
+
+// Server -> node: cancel a running build at the next stage boundary.
+message NodeBuildCancel {
+  string build_id = 1;
+}
+
+// Node -> server: one progress step of a build. stage ∈
+// cloning/building/packaging/uploading (free-form; the UI renders verbatim).
+message NodeBuildEvent {
+  string build_id = 1;
+  int64 seq = 2;                            // monotonic per build
+  string stage = 3;
+  string message = 4;
+  int32 percent = 5;                        // 0-100 where estimable, else 0
+  string reported_at = 6;                   // RFC3339
+  // Bounded, redacted tail of the current step's output (diagnostics).
+  string log_tail = 7;
+}
+
+// Node -> server: terminal outcome of one build. Sent exactly once per
+// build_id, including on failure/cancellation.
+message NodeBuildResult {
+  string build_id = 1;
+  bool ok = 2;
+  // "clone_failed", "step_failed", "artifact_not_found", "upload_failed",
+  // "timeout", "cancelled", …
+  string error_code = 3;
+  string error_message = 4;
+  bool retryable = 5;
+  string stage_reached = 6;
+  // On success: what was uploaded.
+  string artifact_sha256 = 7;
+  int64 artifact_size_bytes = 8;
+}
