@@ -1593,6 +1593,15 @@ message NodeDownstreamFrame {
     NodeBuildRequest node_build = 50;
     // Server -> node: cancel a running build at the next stage boundary.
     NodeBuildCancel node_build_cancel = 51;
+    // Server -> node: install a host-level runtime dependency that is not an
+    // editor CLI — currently Node.js (node + npm). The node downloads the
+    // official platform archive at download_url, verifies it (sha256, or the
+    // distribution's SHASUMS256.txt when sha256 is empty), extracts it under the
+    // node-managed tools dir and re-probes the installed versions. Like
+    // manage_editor this carries a whitelisted tool id, not an arbitrary command.
+    // Acked with NodeCommandAck; on success node_version/npm_version carry the
+    // freshly probed versions so the server can refresh capabilities.
+    NodeInstallHostTool install_host_tool = 52;
   }
 }
 
@@ -1714,14 +1723,26 @@ message NodeSystemEnvEntry {
   string kind = 1;    // skill | plugin | mcp
   string name = 2;
   string version = 3; // best effort; empty is normal (skills carry no version)
-  // provider whose discovery path this entry was found under. Empty for MCP
-  // (one shared config file) and for the provider-neutral .agents tree.
+  // provider whose discovery path this entry was found under — i.e. which
+  // editor's own config/directory declared it. Empty only for the .agents
+  // standard tree (no single owner). MCP entries carry the editor whose config
+  // file declared them (claude/codex/gemini/opencode); ~/.mcp.json is claude's
+  // project-level config, so it reports claude.
   string provider = 4;
   string path = 5; // HOME-relative path, so the console can explain the source
   // platform_managed is true when this entry is in the node's platform manifest
   // (i.e. the platform installed it). Only these may be removed via
   // NodeSyncSystemEnv.remove; everything else is the operator's and read-only.
   bool platform_managed = 6;
+  // best-effort human description: SKILL.md frontmatter `description`, a plugin
+  // manifest's `description`, or empty (MCP configs carry none).
+  string description = 7;
+  // Editors that would actually LOAD this entry in a system-env session — the
+  // tab-attribution fact, owned by the node because it owns the scan targets
+  // and the runtime read rules. One resource read by several editors (the
+  // .agents tree, or a platform skill mirrored into .claude/skills) lists all
+  // of them; the console groups tabs by this, not by provider.
+  repeated string readers = 8;
 }
 
 // EditorAction selects install vs. upgrade for ManageEditor.
@@ -1771,6 +1792,28 @@ message NodeRuntimeUpgrade {
   string proxy_mode = 4;
   string proxy_url = 5;
   string proxy_url_prefix = 6;
+}
+
+// Server -> node: install a host-level runtime dependency (currently Node.js).
+//
+// The node resolves its own os/arch at runtime and the server picks the matching
+// official archive URL (nodejs.org/dist tar.gz on linux/darwin, zip on windows).
+// The node downloads it under its managed tools dir (~/.agent-compose/tools),
+// verifies sha256 when non-empty (otherwise it best-effort fetches the dist's
+// SHASUMS256.txt from the same directory and verifies against that), extracts
+// and atomically swaps in a node-managed install. No sudo: the managed dir is
+// beside the node state dir and writable by the node process; npm's global
+// prefix lands inside it too, so subsequent `npm i -g` editor installs need no
+// elevated privileges. target_version is informational. proxy_* mirrors
+// NodeSelfUpgrade.
+message NodeInstallHostTool {
+  string tool = 1;            // "nodejs" (whitelist on the server)
+  string target_version = 2;  // informational, e.g. "22.17.0"
+  string download_url = 3;   // platform archive (tar.gz / zip)
+  string sha256 = 4;          // optional; empty = verify via SHASUMS256.txt
+  string proxy_mode = 5;
+  string proxy_url = 6;
+  string proxy_url_prefix = 7;
 }
 
 // Server -> node: open a host-shell terminal. cwd empty means the node's own
@@ -2570,6 +2613,20 @@ message NodeCommandAck {
   // MCP entries (read from the provider MCP config), because the point is to
   // show what a system-env session actually gets.
   repeated NodeSystemEnvEntry system_env_inventory = 10;
+  // ---- InstallHostTool acks. ----
+  // Probed Node.js / npm versions after a successful host-tool install. Empty
+  // when the command failed or the ack was not from an install. The server folds
+  // these straight into the node's capability labels so listings refresh without
+  // waiting for a re-register.
+  string node_version = 11;
+  string npm_version = 12;
+  // Probed xcodebuild version after a successful "xcode" host-tool DETECTION.
+  // Unlike nodejs there is no install — the ack's whole payload is this version,
+  // so the operator's click refreshes the xcodebuild_version capability label
+  // immediately and the build tab can pick the node without a node restart.
+  // Empty for nodejs acks, failed detections, or nodes built before this field
+  // (older nodes never set it; the frontend then falls back to restart guidance).
+  string xcodebuild_version = 13;
 }
 
 message NodeSessionSummary {

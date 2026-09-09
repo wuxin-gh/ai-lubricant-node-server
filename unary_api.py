@@ -198,7 +198,7 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
             # the node stream, but no standalone unary request messages. Keep
             # their Connect JSON shape explicit until the proto service surface
             # is regenerated with dedicated request/response messages.
-            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild"}:
+            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild"}:
                 import json
 
                 payload = json.loads((body or b"{}").decode("utf-8") or "{}")
@@ -212,6 +212,10 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                 elif method == "SelfUpgradeNode":
                     data = await service.self_upgrade_node(
                         payload.get("nodeId", ""), target=payload.get("target") or None
+                    )
+                elif method == "InstallHostTool":
+                    data = await service.install_host_tool(
+                        payload.get("nodeId", ""), payload.get("tool", ""), target=payload.get("target") or None
                     )
                 elif method == "RuntimeUpgradeNode":
                     data = await service.runtime_upgrade_node(

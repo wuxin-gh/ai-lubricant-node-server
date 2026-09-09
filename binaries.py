@@ -214,7 +214,7 @@ def build_public_binaries_router():
     directory-escape re-checks in the resolvers, not from auth.
     """
     from fastapi import APIRouter
-    from fastapi.responses import FileResponse, PlainTextResponse
+    from fastapi.responses import FileResponse, PlainTextResponse, Response
 
     router = APIRouter(prefix="/api/v1/public/nodes", tags=["node-control-public"])
 
@@ -233,15 +233,25 @@ def build_public_binaries_router():
 
     @router.get("/docker/{file}")
     async def download_node_docker_file(file: str):  # noqa: ANN202
-        """Stream one node-image build artifact (Dockerfile / entrypoint.sh)."""
+        """Stream one node-image build artifact (Dockerfile / entrypoint.sh).
+
+        Both artifacts are tiny text consumed by ``docker build`` on a Linux
+        host. They MUST arrive as LF: a CRLF shebang (``#!/bin/sh\\r``) makes
+        the kernel resolve the interpreter to a nonexistent ``/bin/sh\\r`` and
+        the container dies in a restart loop with "exec ... failed: No such
+        file or directory". On a Windows checkout (``core.autocrlf=true``) the
+        working tree carries CRLF, so the served bytes are normalized here
+        rather than streamed verbatim. (The role binaries on the sibling
+        ``/binaries/*`` route stay raw — they are not text.)
+        """
         path = resolve_docker_artifact(file)
         if path is None:
             return PlainTextResponse("node docker artifact not found\n", status_code=404)
-        return FileResponse(
-            path,
-            filename=path.name,
+        body = path.read_bytes().replace(b"\r\n", b"\n")
+        return Response(
+            body,
             media_type="application/octet-stream",
-            content_disposition_type="attachment",
+            headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
         )
 
     return router

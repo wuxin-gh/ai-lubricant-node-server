@@ -87,6 +87,31 @@ def test_docker_artifacts_are_served_from_control_plane():
     assert entrypoint.status_code == 200
     assert "AGENT_COMPOSE_NODE_ROLE" in entrypoint.text
 
+    # Both artifacts feed `docker build` on a Linux host: a single CR (Windows
+    # autocrlf checkout) in the shebang breaks exec inside the image.
+    assert "\r" not in dockerfile.text
+    assert "\r" not in entrypoint.text
+
+
+def test_docker_artifacts_are_normalized_to_lf(tmp_path, monkeypatch):
+    """A CRLF working tree (Windows checkout of the nodes submodule) must never
+    reach the wire: the entrypoint's shebang would become ``#!/bin/sh\\r`` and
+    the container dies in a restart loop with "No such file or directory"."""
+    (tmp_path / "Dockerfile").write_bytes(b"FROM alpine:3.22\r\nRUN true\r\n")
+    (tmp_path / "entrypoint.sh").write_bytes(b"#!/bin/sh\r\nexec /bin/true\r\n")
+    monkeypatch.setattr(binaries, "_DOCKER_DIR", tmp_path)
+    client = _client()
+
+    for name, expected in (
+        ("Dockerfile", "FROM alpine:3.22\nRUN true\n"),
+        ("entrypoint.sh", "#!/bin/sh\nexec /bin/true\n"),
+    ):
+        response = client.get(f"/api/v1/public/nodes/docker/{name}")
+        assert response.status_code == 200, name
+        assert b"\r" not in response.content, name
+        assert response.text == expected, name
+        assert f'filename="{name}"' in response.headers["content-disposition"]
+
 
 def test_non_whitelisted_docker_artifact_is_rejected():
     client = _client()

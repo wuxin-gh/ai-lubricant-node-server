@@ -151,6 +151,124 @@ def status_from_proto(status: int) -> str:
     return _PROTO_TO_STATUS.get(status, "")
 
 
+# ── iOS WDA job request building ─────────────────────────────────────────────
+# The Go node speaks the flat NodeIosSigningMaterial (mode enum + per-mode
+# fields) + numeric IosWdaJobAction. The platform-side dict carries lowercase
+# strings ("prepare"/"asc"/…) and base64-encoded bytes; this helper is the one
+# place that translation happens, so it can be unit-tested without a node.
+_WDA_ACTION_TO_PROTO = {
+    "prepare": pb.IosWdaJobAction.IOS_WDA_JOB_ACTION_PREPARE,
+    "renew": pb.IosWdaJobAction.IOS_WDA_JOB_ACTION_RENEW,
+    "reinstall": pb.IosWdaJobAction.IOS_WDA_JOB_ACTION_REINSTALL,
+    "install_signed": pb.IosWdaJobAction.IOS_WDA_JOB_ACTION_INSTALL_SIGNED,
+}
+
+
+def _b64decode(field: str, label: str) -> bytes:
+    """Base64-decode a secret field, raising ValueError with the field label."""
+    import base64
+    import binascii
+
+    raw = (field or "").strip()
+    if not raw:
+        raise ValueError(f"{label} 不能为空")
+    try:
+        # validate=True so non-base64 chars (e.g. a pasted cert) raise instead
+        # of being silently discarded to an empty byte string.
+        return base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{label} 不是合法的 base64: {exc}") from exc
+
+
+def _fill_wda_signing(material: "pb.NodeIosSigningMaterial", signing_profile: dict) -> None:
+    """Map {kind, secret_data} onto the flat NodeIosSigningMaterial in place.
+
+    kind="asc"      → mode=APP_STORE_CONNECT, asc_key_id/issuer_id, asc_private_key(p8 bytes)
+    kind="p12"      → mode=MANUAL_P12, certificate_p12(b64-decoded), p12_password, profile(b64-decoded)
+    kind="presigned"→ mode=PRESIGNED (no credentials; the host skips signing)
+    """
+    kind = str((signing_profile or {}).get("kind") or "").strip().lower()
+    secret = (signing_profile or {}).get("secret_data") or {}
+
+    if kind == "asc":
+        material.mode = pb.IosSigningMode.IOS_SIGNING_MODE_APP_STORE_CONNECT
+        material.asc_key_id = str(secret.get("key_id") or "")
+        material.asc_issuer_id = str(secret.get("issuer_id") or "")
+        p8 = str(secret.get("p8_key") or "").strip()
+        if not p8:
+            raise ValueError("ASC 配置缺少 p8_key")
+        material.asc_private_key = p8.encode("utf-8")
+        # team_id is stored for the user's reference; the node derives the team
+        # from the ASC API key itself, so it has no proto field and is dropped here.
+        return
+    if kind == "p12":
+        material.mode = pb.IosSigningMode.IOS_SIGNING_MODE_MANUAL_P12
+        material.certificate_p12 = _b64decode(str(secret.get("p12_base64") or ""), "p12_base64")
+        material.p12_password = str(secret.get("p12_password") or "")
+        material.provisioning_profile = _b64decode(
+            str(secret.get("mobileprovision_base64") or ""), "mobileprovision_base64"
+        )
+        return
+    if kind == "presigned":
+        # The artifact is already signed (free Apple ID path). The host's
+        # PrepareSigning short-circuits on mode=PRESIGNED and Sign is a no-op.
+        material.mode = pb.IosSigningMode.IOS_SIGNING_MODE_PRESIGNED
+        return
+    raise ValueError(f"unknown signing kind: {kind!r}")
+
+
+def _build_wda_job_request(
+    *,
+    job_id: str,
+    udid: str,
+    device_id: str,
+    action: str,
+    artifact: dict | None = None,
+    signing_profile: dict | None = None,
+    wda_bundle_id: str = "",
+    xctest_config_name: str = "",
+) -> "pb.NodeIosWdaJobRequest":
+    """Build the NodeIosWdaJobRequest, mapping strings/enums the node expects.
+
+    Raises ValueError (caller wraps as RPCError INVALID_ARGUMENT) for a bad
+    action label or signing kind/fields. Pure: no node I/O, so it is unit-
+    tested directly (tests/test_ios_wda_dispatch.py).
+
+    Note: ``wda_bundle_id`` / ``xctest_config_name`` are NOT fields on the
+    request — they live on ``NodeIosWdaArtifact`` (target_bundle_id /
+    xctest_config_name). The Go node reads them off the artifact at signing +
+    launch time, so we always populate the artifact sub-message with them
+    (even for renew/reinstall, where the market url is also merged in by the
+    caller). This also keeps ``art != nil`` so the node doesn't short-circuit
+    on "artifact_missing" before Fetch.
+    """
+    action_enum = _WDA_ACTION_TO_PROTO.get((action or "").strip().lower())
+    if action_enum is None:
+        raise ValueError(
+            f"unknown wda action: {action!r} (expected prepare/renew/reinstall/install_signed)"
+        )
+    req = pb.NodeIosWdaJobRequest(
+        job_id=job_id,
+        udid=udid,
+        device_id=device_id,
+        action=action_enum,
+    )
+    # target_bundle_id / xctest_config_name belong on the artifact, not the job.
+    art = req.artifact
+    art.target_bundle_id = wda_bundle_id or ""
+    art.xctest_config_name = xctest_config_name or ""
+    if artifact:
+        art.artifact_id = str(artifact.get("id") or "")
+        art.sha256 = str(artifact.get("sha256") or "")
+        # proto 字段名是 url（不是 download_url）
+        art.url = str(artifact.get("download_url") or "")
+        art.size_bytes = int(artifact.get("size_bytes") or 0)
+        art.version = str(artifact.get("version") or "")
+    if signing_profile:
+        _fill_wda_signing(req.signing, signing_profile)
+    return req
+
+
 def role_to_proto(role: str) -> int:
     return _ROLE_TO_PROTO.get(normalize_node_role(role), pb.NodeRole.NODE_ROLE_EXECUTION)
 
@@ -1031,14 +1149,34 @@ class NodeService:
         if not _is_passive_manager(record):
             caps = record.capabilities or {}
             missing: list[str] = []
-            if not (caps.get("node_version") or "").strip():
-                missing.append("Node.js")
-            if not (caps.get("npm_version") or "").strip():
-                missing.append("npm")
-            if not (caps.get("runtime_version") or "").strip():
-                missing.append("agent-compose runtime")
-            if not (caps.get("providers") or "").strip():
-                missing.append("至少一个编辑器客户端")
+            # A management node (with a client) does not run provider CLIs or the
+            # agent-compose runtime itself — it only launches execution nodes
+            # (docker run …). Its approve gate is therefore narrower: it just
+            # needs to be able to launch. docker method needs the docker CLI on
+            # the host; standalone needs the execution binary. Requiring runtime/
+            # editors here blocked the manager, which in turn blocked every
+            # execution node's auto-launch (dispatch needs an APPROVED manager).
+            if record.role == NODE_ROLE_MANAGEMENT:
+                if str(caps.get("docker") or "").lower() not in ("true", "1", "yes"):
+                    missing.append("docker（管理节点用来拉起执行节点）")
+            elif record.role == NODE_ROLE_IOS_HOST:
+                # iOS host 只负责本机 xcodebuild 构建 WDA 和经 device-control
+                # WebSocket 驱动配对的 iPhone：它不跑 agent-compose session，
+                # Node.js/npm/runtime/编辑器 CLI 一概不需要（node-ios 注册时就
+                # 不上报这些）。此前落进执行节点分支，导致 ios_host 永远过不了
+                # 审批（tests/test_nodeserver_ios_mgmt.py 全挂在 1172 行）。
+                # Xcode 是构建能力而非审批前置：缺 Xcode 时构建 tab 自然筛掉
+                # 该节点，环境面板另有「检测 Xcode」入口给出手动安装原因。
+                pass
+            else:
+                if not (caps.get("node_version") or "").strip():
+                    missing.append("Node.js")
+                if not (caps.get("npm_version") or "").strip():
+                    missing.append("npm")
+                if not (caps.get("runtime_version") or "").strip():
+                    missing.append("agent-compose runtime")
+                if not (caps.get("providers") or "").strip():
+                    missing.append("至少一个编辑器客户端")
             if missing:
                 raise RPCError(
                     Code.FAILED_PRECONDITION,
@@ -1109,6 +1247,16 @@ class NodeService:
                 Code.FAILED_PRECONDITION,
                 f"node {node_id} is online; retry with force to delete it anyway",
             )
+
+        # Deletion of a managed execution node: instruct the owning manager to
+        # stop the launched child (docker rm -f / compose down). This MUST happen
+        # before deleting the record — otherwise the manager loses its handle to
+        # the running child, leaving an orphan on the host.
+        if record.role == NODE_ROLE_EXECUTION and (record.manager_node_id or "").strip():
+            await self._dispatch_delete_execution_node(
+                record.manager_node_id, node_id
+            )
+
         try:
             await self.store.delete_node(node_id)
         except NodeNotFound as exc:
@@ -1270,6 +1418,54 @@ class NodeService:
             raise RPCError(Code.FAILED_PRECONDITION, f"node {manager_id} is not a management node")
         return manager_id
 
+    async def _dispatch_delete_execution_node(self, manager_id: str, launch_id: str) -> bool:
+        """Ask an online management node to stop a launched child container/process.
+
+        The child record can be removed from the server independently, but a
+        management node owns the actual Docker/process handle. Teardown must be
+        sent before deleting that record so a server-side delete does not leave
+        an orphan child running on the manager host.
+        """
+        manager_id = (manager_id or "").strip()
+        launch_id = (launch_id or "").strip()
+        if not manager_id or not launch_id:
+            return True
+        manager = await self.store.get_node_if_exists(manager_id)
+        if manager is None or _is_passive_manager(manager):
+            return True
+        conn = self.registry.lookup(manager_id)
+        if conn is None:
+            logger.warning(
+                "[nodeserver] cannot stop child {}: manager {} is offline; deleting server record only",
+                launch_id,
+                manager_id,
+            )
+            return True
+
+        frame_id = str(uuid.uuid4())
+        ack_future = conn.await_ack(frame_id)
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=frame_id,
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.delete_execution_node.CopyFrom(pb.NodeDeleteExecutionNode(launch_id=launch_id))
+        try:
+            conn.send(frame)
+            ack = await asyncio.wait_for(ack_future, timeout=DISPATCH_ACK_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001
+            conn.cancel_ack(frame_id)
+            raise RPCError(
+                Code.UNAVAILABLE,
+                f"failed to stop execution node {launch_id} on manager {manager_id}: {exc}",
+            ) from exc
+        if ack is None or not ack.ok:
+            raise RPCError(
+                Code.INTERNAL,
+                f"manager {manager_id} failed to stop execution node {launch_id}: "
+                f"{(ack.error if ack else 'no acknowledgement')}",
+            )
+        return True
+
     async def _dispatch_create_execution_node(
         self, manager_id: str, record: NodeRecord, method: str, secret_b32: str
     ) -> bool:
@@ -1381,23 +1577,158 @@ class NodeService:
             raise RPCError(Code.INTERNAL, f"{verb} {name} on {node_id} failed: {message}")
 
         version = (ack.editor_version or "").strip()
-        if version:
-            await self._store_editor_version(node_id, name, version)
+        # Persist on every successful ack, not only when a version was probed:
+        # the install itself succeeded (the node acked), so providers must fold
+        # the editor in even if `--version` probing failed server-side of the ack.
+        await self._store_editor_version(node_id, name, version)
         return {"node_id": node_id, "editor": name, "action": verb, "version": version}
 
     async def _store_editor_version(self, node_id: str, editor: str, version: str) -> None:
-        """Persist an editor version label so listings/detail refresh immediately."""
+        """Persist an editor version label so listings/detail refresh immediately.
+
+        Also folds the editor into ``providers`` (the审批门禁/前端真相源）when it is
+        a real editor: providers is otherwise only set from the register-time probe,
+        so a just-installed editor would not clear the approve gate until the node
+        restarts and re-registers — the "装了编辑器还卡至少一个编辑器" symptom. ``ocr``
+        is an npm tool, not an editor, so it never joins providers.
+        """
         record = await self.store.get_node_if_exists(node_id)
         if record is None:
             return
         labels = dict(record.capabilities or {})
         key = "ocr_version" if editor == "ocr" else f"editor_version_{editor}"
         labels[key] = version
+        if editor != "ocr":
+            existing = [p.strip() for p in str(labels.get("providers") or "").split(",") if p.strip()]
+            if editor not in existing:
+                existing.append(editor)
+                labels["providers"] = ",".join(existing)
         record.capabilities = labels
         try:
             await self.store.upsert_node(record)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[nodeserver] persist editor version failed {}: {}", node_id, exc)
+
+    # ── InstallHostTool (install Node.js on the node host) ─────────────────────
+    async def install_host_tool(self, node_id: str, tool: str, *, target: dict | None = None) -> dict:
+        """Ask a connected node to install a whitelisted host tool (nodejs / xcode-detect).
+
+        Guard policy mirrors :meth:`manage_editor` — exists, not passive, online —
+        and deliberately does NOT require approval: the approve gate itself
+        blocks on a missing Node.js/npm, so the install must be reachable from
+        the pending approval flow or the gate deadlocks. The command is a
+        whitelisted tool id rendered by the node (download + extract + probe),
+        never an arbitrary shell command, so this stays narrower than HostExec.
+
+        ``target`` is resolved by the caller (data side) and carries the archive
+        URL, optional sha256 and the proxy fields, exactly like a runtime
+        upgrade target.
+        """
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        tool = (tool or "").strip().lower()
+        # "xcode" is detection-only: the node probes for a working xcodebuild and
+        # either acks ok or explains why App-Store-only Xcode cannot be auto-
+        # installed. No archive target is involved.
+        if tool not in ("nodejs", "xcode"):
+            raise RPCError(Code.INVALID_ARGUMENT, f"unsupported host tool {tool!r}; supported: nodejs, xcode")
+        record = await self.store.get_node_if_exists(node_id)
+        if record is None:
+            raise RPCError(Code.NOT_FOUND, f"node {node_id} not found")
+        if _is_passive_manager(record):
+            raise RPCError(
+                Code.FAILED_PRECONDITION,
+                f"node {node_id} is a grouping container with no client; nothing to install on",
+            )
+        conn = self.registry.lookup(node_id)
+        if conn is None:
+            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
+        target = target or {}
+        target_version = str(target.get("target_version") or "").strip()
+        download_url = str(target.get("download_url") or "").strip()
+        sha256 = str(target.get("sha256") or "").strip()
+        if tool == "nodejs" and not download_url:
+            raise RPCError(Code.INVALID_ARGUMENT, "target.download_url is required")
+
+        frame_id = str(uuid.uuid4())
+        ack_future = conn.await_ack(frame_id)
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=frame_id,
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.install_host_tool.CopyFrom(
+            pb.NodeInstallHostTool(
+                tool=tool,
+                target_version=target_version,
+                download_url=download_url,
+                sha256=sha256,
+                proxy_mode=str(target.get("proxy_mode") or ""),
+                proxy_url=str(target.get("proxy_url") or ""),
+                proxy_url_prefix=str(target.get("proxy_url_prefix") or ""),
+            )
+        )
+        try:
+            conn.send(frame)
+        except Exception as exc:  # noqa: BLE001
+            conn.cancel_ack(frame_id)
+            raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
+        # A Node.js archive is ~30MB + extract + probe: minutes on slow links,
+        # same ceiling as an editor install.
+        try:
+            ack = await asyncio.wait_for(ack_future, timeout=EDITOR_ACK_TIMEOUT)
+        except TimeoutError as exc:
+            conn.cancel_ack(frame_id)
+            raise RPCError(
+                Code.DEADLINE_EXCEEDED,
+                "host tool install ack timed out; the download may still be running",
+            ) from exc
+        if not ack.ok:
+            raise RPCError(Code.INTERNAL, ack.error or "host tool install failed")
+        node_version = (ack.node_version or "").strip()
+        npm_version = (ack.npm_version or "").strip()
+        xcodebuild_version = (ack.xcodebuild_version or "").strip()
+        if node_version or npm_version or xcodebuild_version:
+            await self._store_host_tool_versions(
+                node_id, node_version, npm_version, xcodebuild_version
+            )
+        return {
+            "node_id": node_id,
+            "tool": tool,
+            "target_version": target_version,
+            "node_version": node_version,
+            "npm_version": npm_version,
+            "xcodebuild_version": xcodebuild_version,
+        }
+
+    async def _store_host_tool_versions(
+        self,
+        node_id: str,
+        node_version: str,
+        npm_version: str,
+        xcodebuild_version: str = "",
+    ) -> None:
+        """Fold freshly probed host-tool versions into capability labels immediately.
+
+        Same immediate-refresh contract as :meth:`_store_editor_version`: the
+        next ListNodes reflects the install or Xcode detection without waiting
+        for a re-register.
+        """
+        record = await self.store.get_node_if_exists(node_id)
+        if record is None:
+            return
+        labels = dict(record.capabilities or {})
+        if node_version:
+            labels["node_version"] = node_version
+        if npm_version:
+            labels["npm_version"] = npm_version
+        if xcodebuild_version:
+            labels["xcodebuild_version"] = xcodebuild_version
+        record.capabilities = labels
+        try:
+            await self.store.upsert_node(record)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[nodeserver] persist host tool versions failed {}: {}", node_id, exc)
 
     # ── NodeEnvironment (provision / sync / inspect a shared environment) ───────
     # The user-facing ledger (which environments exist, their resource sets) lives
@@ -1568,6 +1899,10 @@ class NodeService:
             "provider": item.provider,
             "path": item.path,
             "platform_managed": bool(item.platform_managed),
+            "description": item.description,
+            # Editors that would load this entry (node-owned fact; the console
+            # groups its per-editor tabs by this, not by provider).
+            "readers": list(item.readers),
         }
 
     async def inspect_system_env(self, node_id: str, provider: str = "") -> dict:
@@ -1985,43 +2320,28 @@ class NodeService:
         job tracking.
 
         artifact: {id?, sha256, download_url, size_bytes, version}
-        signing_profile: {kind: "asc"|"p12", secret_data: {...}}
+        signing_profile: {kind: "asc"|"p12"|"presigned", secret_data: {...}}
         """
+        try:
+            req = _build_wda_job_request(
+                job_id=job_id,
+                udid=udid,
+                device_id=device_id,
+                action=action,
+                artifact=artifact,
+                signing_profile=signing_profile,
+                wda_bundle_id=wda_bundle_id,
+                xctest_config_name=xctest_config_name,
+            )
+        except RPCError:
+            raise
+        except ValueError as exc:
+            raise RPCError(Code.INVALID_ARGUMENT, str(exc)) from exc
         conn = await self._require_online_ios_host(node_id)
         frame = pb.NodeDownstreamFrame(
             server_frame_id=str(uuid.uuid4()),
             created_at=crypto.rfc3339nano(crypto.utc_now()),
         )
-        req = pb.NodeIosWdaJobRequest(
-            job_id=job_id,
-            udid=udid,
-            device_id=device_id,
-            action=action,
-            wda_bundle_id=wda_bundle_id,
-            xctest_config_name=xctest_config_name,
-        )
-        if artifact:
-            art = req.artifact
-            art.artifact_id = str(artifact.get("id") or "")
-            art.sha256 = str(artifact.get("sha256") or "")
-            # proto 字段名是 url（不是 download_url）
-            art.url = str(artifact.get("download_url") or "")
-            art.size_bytes = int(artifact.get("size_bytes") or 0)
-            art.version = str(artifact.get("version") or "")
-        if signing_profile:
-            kind = str(signing_profile.get("kind") or "")
-            secret = signing_profile.get("secret_data") or {}
-            if kind == "asc":
-                asc = req.signing_asc
-                asc.p8_key = str(secret.get("p8_key") or "")
-                asc.key_id = str(secret.get("key_id") or "")
-                asc.issuer_id = str(secret.get("issuer_id") or "")
-                asc.team_id = str(secret.get("team_id") or "")
-            elif kind == "p12":
-                p12 = req.signing_p12
-                p12.p12_base64 = str(secret.get("p12_base64") or "")
-                p12.p12_password = str(secret.get("p12_password") or "")
-                p12.mobileprovision_base64 = str(secret.get("mobileprovision_base64") or "")
         frame.ios_wda_job.CopyFrom(req)
 
         # Initialize job snapshot for polling queries
@@ -2435,11 +2755,26 @@ class NodeService:
         if self.registry.lookup(node_id) is not None:
             never_connected = False
         if never_connected:
+            # An onboarded-but-never-connected execution node may still have been
+            # launched by its manager (the child is starting up / dialing). Stop
+            # it there before dropping the record, same as the delete path.
+            if record.role == NODE_ROLE_EXECUTION and (record.manager_node_id or "").strip():
+                await self._dispatch_delete_execution_node(
+                    record.manager_node_id, node_id
+                )
             try:
                 await self.store.delete_node(node_id)
             except NodeNotFound as exc:
                 raise RPCError(Code.NOT_FOUND, str(exc))
             return pb.RevokeOnboardNodeResponse(deleted=True)
+
+        # Revoking a manager-launched execution node stops the child too: the
+        # revoked node would otherwise keep running (and restart-retry) on the
+        # manager host with credentials the server no longer accepts.
+        if record.role == NODE_ROLE_EXECUTION and (record.manager_node_id or "").strip():
+            await self._dispatch_delete_execution_node(
+                record.manager_node_id, node_id
+            )
 
         try:
             await self.store.set_node_status(node_id, NODE_STATUS_REVOKED)

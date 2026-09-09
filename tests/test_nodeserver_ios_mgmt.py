@@ -123,7 +123,10 @@ async def _register_ios_host(
     reg = pb.NodeUpstreamFrame()
     caps = pb.NodeCapabilities(os="darwin", arch="arm64")
     if ios_mgmt:
-        caps.ios_mgmt = "true"
+        # 真实 node-ios 把能力标签放在 caps.labels（ios/main.go Options.Labels →
+        # client.go capabilityLabels → Capabilities.Labels），proto 的
+        # NodeCapabilities 没有 ios_mgmt 专属字段。
+        caps.labels["ios_mgmt"] = "true"
     reg.register.CopyFrom(
         pb.NodeRegister(node_id=node_id, totp_code=code, node_name="ios-host-e2e", capabilities=caps)
     )
@@ -197,7 +200,7 @@ async def test_ios_devices_report_cached_in_registry(db, service):
     dev.name = "Test iPhone"
     dev.model = "iPhone15,2"
     dev.product_version = "17.3.1"
-    dev.connection_type = "USB"
+    dev.connection_type = "IOS_CONNECTION_TYPE_USB"
     dev.present = True
     dev.claimed = False
 
@@ -388,6 +391,91 @@ async def test_get_ios_devices_empty_when_no_report_yet(db, service):
     result = await service.get_ios_devices(node_id)
     assert result["node_id"] == node_id
     assert result["devices"] == []
+
+    ch.disconnect()
+    await asyncio.wait_for(handler, timeout=2.0)
+
+
+# ── ios_host approve-gate exemption ──────────────────────────────────────────
+# node-ios 不跑 agent-compose session：它注册时不报 providers/node_version/
+# npm_version/runtime_version（iOS 宿主能力在 labels 的 ios_mgmt=true），
+# 此前 approve_node 的执行节点分支照样卡「至少一个编辑器客户端」，ios_host
+# 从门禁加上那天起就永远过不了审批。
+
+
+@pytest.mark.asyncio
+async def test_ios_host_approve_exempt_from_execution_gate(db, service):
+    """ios_host 审批不要求 Node.js/npm/runtime/编辑器——它只做构建和驱动 iPhone。
+
+    场景即真实 node-ios 首次入驻：onboard → 节点拨入 register（只带 os/arch +
+    ios_mgmt 标签，无 providers/版本标签）→ 管理员点「通过审批」。此时必须直接
+    通过，而不是被「至少一个编辑器客户端」卡死。
+    """
+    resp = await service.onboard_node(
+        pb.OnboardNodeRequest(role=pb.NodeRole.NODE_ROLE_IOS_HOST, node_name="ios-host-gate")
+    )
+    ch = FakeNodeChannel()
+    scope = {"type": "http", "method": "POST", "path": "/x"}
+    handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
+
+    await _register_ios_host(ch, service, resp.node_id, resp.secret, ios_mgmt=True)
+
+    record = await service.store.get_node_if_exists(resp.node_id)
+    assert record is not None
+    caps = record.capabilities or {}
+    # 真实 node-ios 注册时确实没有任何执行节点的环境标签。
+    assert not (caps.get("providers") or "").strip()
+    assert not (caps.get("node_version") or "").strip()
+
+    approve_resp = await service.approve_node(pb.ApproveNodeRequest(node_id=resp.node_id))
+    assert approve_resp.node.status == pb.NodeStatus.NODE_STATUS_APPROVED
+
+    ch.disconnect()
+    await asyncio.wait_for(handler, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_execution_node_approve_still_blocked_without_providers(db, service):
+    """回归：执行节点缺编辑器仍然被审批门禁拦住——豁免只给 ios_host。"""
+    # 执行节点 onboard 必须挂一个管理节点；passive 只做归属容器不拨入。
+    mgr = await service.onboard_node(
+        pb.OnboardNodeRequest(role=pb.NodeRole.NODE_ROLE_PASSIVE_MANAGEMENT, node_name="mgr-gate")
+    )
+    resp = await service.onboard_node(
+        pb.OnboardNodeRequest(
+            role=pb.NodeRole.NODE_ROLE_EXECUTION,
+            node_name="exec-gate",
+            manager_node_id=mgr.node_id,
+        )
+    )
+    ch = FakeNodeChannel()
+    scope = {"type": "http", "method": "POST", "path": "/x"}
+    handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
+
+    # 注册一个什么都缺的执行节点（无 providers/版本标签）。
+    kind, hello = await ch.next_downstream()
+    assert kind == "frame"
+    assert hello.WhichOneof("frame") == "server_hello"
+    secret = crypto.decode_secret(resp.secret)
+    code = crypto.generate(secret, crypto.utc_now())
+    reg = pb.NodeUpstreamFrame()
+    reg.register.CopyFrom(
+        pb.NodeRegister(
+            node_id=resp.node_id,
+            totp_code=code,
+            node_name="exec-gate",
+            capabilities=pb.NodeCapabilities(os="linux", arch="amd64"),
+        )
+    )
+    ch.feed_upstream(reg)
+    kind, registered = await ch.next_downstream()
+    assert kind == "frame"
+    assert registered.WhichOneof("frame") == "registered"
+
+    with pytest.raises(RPCError) as exc_info:
+        await service.approve_node(pb.ApproveNodeRequest(node_id=resp.node_id))
+    assert exc_info.value.code == Code.FAILED_PRECONDITION
+    assert "编辑器" in str(exc_info.value)
 
     ch.disconnect()
     await asyncio.wait_for(handler, timeout=2.0)
