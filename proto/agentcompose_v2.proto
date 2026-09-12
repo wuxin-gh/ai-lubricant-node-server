@@ -1402,6 +1402,17 @@ message NodeUpstreamFrame {
     // Terminal outcome of one build. Always sent exactly once per build_id,
     // including on failure/cancellation.
     NodeBuildResult node_build_result = 21;
+    // ─── Async host-tool jobs (Xcode auto-install) ───────────────────────────
+    // Streamed progress of one host-tool install job (download → verify →
+    // extract → move → activate → probe). Correlated by job_id; seq is
+    // monotonic per job. current/total bytes give the download stage a real
+    // denominator (Xcode .xip is ~12GB).
+    NodeHostToolJobEvent host_tool_job_event = 22;
+    // Terminal outcome of one host-tool job. Always sent exactly once per
+    // job_id, including on failure/cancellation. xcodebuild_version is the
+    // freshly probed value so the server folds it into capabilities without
+    // waiting for a node re-register.
+    NodeHostToolJobResult host_tool_job_result = 23;
   }
 }
 
@@ -1602,7 +1613,29 @@ message NodeDownstreamFrame {
     // Acked with NodeCommandAck; on success node_version/npm_version carry the
     // freshly probed versions so the server can refresh capabilities.
     NodeInstallHostTool install_host_tool = 52;
+    // ─── Async host-tool jobs (Xcode auto-install) ───────────────────────────
+    // Server -> node: run one long-running host-tool install job (currently
+    // Xcode). The node acks "accepted" immediately (within seconds) and streams
+    // progress as NodeHostToolJobEvent / a terminal NodeHostToolJobResult — the
+    // install itself (a ~12GB .xip download + extraction) takes hours and can
+    // never fit the synchronous InstallHostTool ack window. tool is a whitelist
+    // id; download_url must be an https .xip direct link resolved by the server.
+    NodeHostToolJob host_tool_job = 53;
+    // Server -> node: cancel a running host-tool job at the next stage boundary.
+    NodeHostToolJobCancel host_tool_job_cancel = 54;
+    // Server -> node: re-probe every capability label NOW and reply with the
+    // full NodeCapabilities snapshot (the same shape the node registers with).
+    // Lets the console refresh editors/host tools/os versions after an operator
+    // installs something on the node host without restarting the node process.
+    // Acked with NodeCommandAck; on success refreshed_capabilities carries the
+    // freshly probed snapshot. Handled by the common node client (all roles).
+    NodeRefreshLabelsRequest refresh_labels = 55;
   }
+}
+
+// Server -> node: payload of the refresh_labels frame. Deliberately empty —
+// the node knows what to probe; the reply carries the data.
+message NodeRefreshLabelsRequest {
 }
 
 // EnvironmentAction selects create vs. remove for ManageNodeEnvironment.
@@ -2103,8 +2136,16 @@ message NodeRegister {
 // can derive its TOTP code from the same clock the server will validate against
 // (the node must NOT use its own local clock or public NTP). server_time is
 // RFC3339Nano UTC.
+//
+// gateway_origin is the DATA service origin (scheme://host[:port]) that serves
+// the MCP SSE gateway (/mcp/...). The node dials the CONTROL plane, which is a
+// separate process/port that serves no MCP routes — so relative MCP spec URLs
+// sent in session frames must resolve against this announced origin, NOT
+// against the address the node dials. Empty (old control plane) → the node
+// falls back to its own dial address.
 message NodeServerHello {
   string server_time = 1;
+  string gateway_origin = 2;
 }
 
 message EditorModeSemantics {
@@ -2292,6 +2333,12 @@ message NodeCreateSession {
   // environment's files because of them.
   repeated string active_skills = 23;
   repeated string active_plugins = 24;
+  // system_prompt is the platform-level task prompt the node writes to
+  // stateRoot/agents/system-prompts/system-prompt.txt. The interactive runtime
+  // re-reads that file every turn and splices it into the provider's
+  // systemContext, so a server-side update takes effect on the next
+  // human_message (hot-switch, no restart). Empty = no prompt injected.
+  string system_prompt = 25;
 }
 
 // Git provisioning: the node clones locally. Supports creating a fresh working
@@ -2627,6 +2674,13 @@ message NodeCommandAck {
   // Empty for nodejs acks, failed detections, or nodes built before this field
   // (older nodes never set it; the frontend then falls back to restart guidance).
   string xcodebuild_version = 13;
+  // ---- RefreshLabels acks. ----
+  // The node's full capability snapshot, freshly probed (os/arch/docker/
+  // providers/editors/labels) — the same shape the node registers with. The
+  // server folds it into the node's stored capabilities so the console updates
+  // without a node restart. Empty for older nodes (they reject unknown
+  // downstream frames server-side; the caller surfaces that as an error).
+  NodeCapabilities refreshed_capabilities = 14;
 }
 
 message NodeSessionSummary {
@@ -3456,4 +3510,78 @@ message NodeBuildResult {
   // On success: what was uploaded.
   string artifact_sha256 = 7;
   int64 artifact_size_bytes = 8;
+}
+
+// ─── Async host-tool jobs (Xcode auto-install) ──────────────────────────────
+//
+// The synchronous InstallHostTool channel (field 52) waits for the node to
+// finish inside one ack window (~600s). A full Xcode install — a ~12GB .xip
+// download plus 20-60 minutes of `xip -x` extraction — can never fit that
+// window, so Xcode moves to the same async job pattern the build pipeline
+// uses: the server dispatches NodeHostToolJob, the node acks "accepted"
+// within seconds, then streams NodeHostToolJobEvent progress frames and a
+// single terminal NodeHostToolJobResult. The server keeps an in-memory
+// snapshot per job for polling; the result is the only durable truth.
+
+// Server -> node: run one long-running host-tool install job. tool is a
+// whitelist id (currently only "xcode"); download_url is an https .xip direct
+// link the SERVER resolved (xcodereleases data) — the node only validates it
+// defensively. sha256 is optional: xcodereleases publishes no digest, and the
+// .xip format carries Apple's own signature verification, so an empty sha256
+// falls back to a size check against download_size_bytes (which also powers
+// the disk-space precheck and the download progress denominator).
+// proxy_* mirrors NodeSelfUpgrade.
+message NodeHostToolJob {
+  string job_id = 1;
+  string tool = 2;               // "xcode" (whitelist on the server)
+  string target_version = 3;    // e.g. "16.2" — informational + short-circuit check
+  string download_url = 4;      // https .xip direct link
+  int64 download_size_bytes = 5; // disk precheck + progress denominator
+  string sha256 = 6;            // optional; empty = size check + xip signature
+  int64 timeout_seconds = 7;    // whole-job budget; 0 = node default (4h)
+  string proxy_mode = 8;        // "" | "network" | "url_prefix"
+  string proxy_url = 9;
+  string proxy_url_prefix = 10;
+}
+
+// Server -> node: cancel a running host-tool job at the next stage boundary.
+message NodeHostToolJobCancel {
+  string job_id = 1;
+}
+
+// Node -> server: one progress step of a host-tool job. stage ∈
+// checking / downloading / verifying / extracting / moving / activating /
+// probing (free-form; the UI renders verbatim). current/total bytes are set
+// during downloading so the UI can show real GB progress; seq is monotonic
+// per job.
+message NodeHostToolJobEvent {
+  string job_id = 1;
+  int64 seq = 2;                 // monotonic per job
+  string stage = 3;
+  string message = 4;
+  int32 percent = 5;             // 0-100 where estimable, else 0
+  string reported_at = 6;        // RFC3339
+  string log_tail = 7;           // bounded, redacted diagnostics tail
+  int64 current_bytes = 8;       // download progress numerator
+  int64 total_bytes = 9;         // download progress denominator
+}
+
+// Node -> server: terminal outcome of one host-tool job. Sent exactly once
+// per job_id, including on failure/cancellation. error_code vocabulary:
+// not_darwin / incompatible_macos / insufficient_space / download_failed /
+// extract_failed / move_failed / activate_failed / probe_failed / cancelled /
+// busy / timeout. When the checking stage finds the requested version already
+// installed, ok=true with stage_reached="checking" (no download ran).
+message NodeHostToolJobResult {
+  string job_id = 1;
+  bool ok = 2;
+  string error_code = 3;
+  string error_message = 4;
+  bool retryable = 5;
+  string stage_reached = 6;
+  // On success: the freshly probed xcodebuild version, folded straight into
+  // the node's capability labels by the server (no re-register needed).
+  string xcodebuild_version = 7;
+  // On success: where the app bundle landed (e.g. /Applications/Xcode-16.2.app).
+  string app_path = 8;
 }

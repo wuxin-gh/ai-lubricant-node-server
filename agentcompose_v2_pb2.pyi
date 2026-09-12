@@ -2107,7 +2107,7 @@ class SkillSpec(_message.Message):
     def __init__(self, name: _Optional[str] = ..., source: _Optional[str] = ..., url: _Optional[str] = ..., path: _Optional[str] = ..., ref: _Optional[str] = ..., username: _Optional[str] = ..., password: _Optional[str] = ..., token: _Optional[str] = ...) -> None: ...
 
 class NodeUpstreamFrame(_message.Message):
-    __slots__ = ("client_frame_id", "register", "heartbeat", "session_output", "session_result", "command_ack", "error", "tunnel_response", "session_event", "terminal_output", "terminal_exit", "host_exec_result", "file_upload_result", "terminal_list_result", "tool_run_event", "session_stage", "ios_devices_report", "ios_job_event", "ios_job_result", "node_build_event", "node_build_result")
+    __slots__ = ("client_frame_id", "register", "heartbeat", "session_output", "session_result", "command_ack", "error", "tunnel_response", "session_event", "terminal_output", "terminal_exit", "host_exec_result", "file_upload_result", "terminal_list_result", "tool_run_event", "session_stage", "ios_devices_report", "ios_job_event", "ios_job_result", "node_build_event", "node_build_result", "host_tool_job_event", "host_tool_job_result")
     CLIENT_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     REGISTER_FIELD_NUMBER: _ClassVar[int]
     HEARTBEAT_FIELD_NUMBER: _ClassVar[int]
@@ -2129,6 +2129,8 @@ class NodeUpstreamFrame(_message.Message):
     IOS_JOB_RESULT_FIELD_NUMBER: _ClassVar[int]
     NODE_BUILD_EVENT_FIELD_NUMBER: _ClassVar[int]
     NODE_BUILD_RESULT_FIELD_NUMBER: _ClassVar[int]
+    HOST_TOOL_JOB_EVENT_FIELD_NUMBER: _ClassVar[int]
+    HOST_TOOL_JOB_RESULT_FIELD_NUMBER: _ClassVar[int]
     client_frame_id: str
     register: NodeRegister
     heartbeat: NodeHeartbeat
@@ -2150,10 +2152,12 @@ class NodeUpstreamFrame(_message.Message):
     ios_job_result: NodeIosJobResult
     node_build_event: NodeBuildEvent
     node_build_result: NodeBuildResult
-    def __init__(self, client_frame_id: _Optional[str] = ..., register: _Optional[_Union[NodeRegister, _Mapping]] = ..., heartbeat: _Optional[_Union[NodeHeartbeat, _Mapping]] = ..., session_output: _Optional[_Union[NodeSessionOutput, _Mapping]] = ..., session_result: _Optional[_Union[NodeSessionResult, _Mapping]] = ..., command_ack: _Optional[_Union[NodeCommandAck, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_response: _Optional[_Union[NodeTunnelResponse, _Mapping]] = ..., session_event: _Optional[_Union[NodeSessionEventStructured, _Mapping]] = ..., terminal_output: _Optional[_Union[NodeTerminalOutput, _Mapping]] = ..., terminal_exit: _Optional[_Union[NodeTerminalExit, _Mapping]] = ..., host_exec_result: _Optional[_Union[NodeHostExecResult, _Mapping]] = ..., file_upload_result: _Optional[_Union[NodeFileUploadResult, _Mapping]] = ..., terminal_list_result: _Optional[_Union[NodeTerminalListResult, _Mapping]] = ..., tool_run_event: _Optional[_Union[NodeToolRunEvent, _Mapping]] = ..., session_stage: _Optional[_Union[NodeSessionStage, _Mapping]] = ..., ios_devices_report: _Optional[_Union[NodeIosDevicesReport, _Mapping]] = ..., ios_job_event: _Optional[_Union[NodeIosJobEvent, _Mapping]] = ..., ios_job_result: _Optional[_Union[NodeIosJobResult, _Mapping]] = ..., node_build_event: _Optional[_Union[NodeBuildEvent, _Mapping]] = ..., node_build_result: _Optional[_Union[NodeBuildResult, _Mapping]] = ...) -> None: ...
+    host_tool_job_event: NodeHostToolJobEvent
+    host_tool_job_result: NodeHostToolJobResult
+    def __init__(self, client_frame_id: _Optional[str] = ..., register: _Optional[_Union[NodeRegister, _Mapping]] = ..., heartbeat: _Optional[_Union[NodeHeartbeat, _Mapping]] = ..., session_output: _Optional[_Union[NodeSessionOutput, _Mapping]] = ..., session_result: _Optional[_Union[NodeSessionResult, _Mapping]] = ..., command_ack: _Optional[_Union[NodeCommandAck, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_response: _Optional[_Union[NodeTunnelResponse, _Mapping]] = ..., session_event: _Optional[_Union[NodeSessionEventStructured, _Mapping]] = ..., terminal_output: _Optional[_Union[NodeTerminalOutput, _Mapping]] = ..., terminal_exit: _Optional[_Union[NodeTerminalExit, _Mapping]] = ..., host_exec_result: _Optional[_Union[NodeHostExecResult, _Mapping]] = ..., file_upload_result: _Optional[_Union[NodeFileUploadResult, _Mapping]] = ..., terminal_list_result: _Optional[_Union[NodeTerminalListResult, _Mapping]] = ..., tool_run_event: _Optional[_Union[NodeToolRunEvent, _Mapping]] = ..., session_stage: _Optional[_Union[NodeSessionStage, _Mapping]] = ..., ios_devices_report: _Optional[_Union[NodeIosDevicesReport, _Mapping]] = ..., ios_job_event: _Optional[_Union[NodeIosJobEvent, _Mapping]] = ..., ios_job_result: _Optional[_Union[NodeIosJobResult, _Mapping]] = ..., node_build_event: _Optional[_Union[NodeBuildEvent, _Mapping]] = ..., node_build_result: _Optional[_Union[NodeBuildResult, _Mapping]] = ..., host_tool_job_event: _Optional[_Union[NodeHostToolJobEvent, _Mapping]] = ..., host_tool_job_result: _Optional[_Union[NodeHostToolJobResult, _Mapping]] = ...) -> None: ...
 
 class NodeDownstreamFrame(_message.Message):
-    __slots__ = ("server_frame_id", "created_at", "registered", "create_session", "delete_session", "list_sessions", "error", "tunnel_request", "session_input", "create_execution_node", "delete_execution_node", "server_hello", "configure_session_llm", "apply_session_mcps", "apply_session_skills", "apply_session_plugins", "start_session_runtime", "restart_session_runtime", "configure_session_mode", "collect_session_artifacts", "proxy_request", "manage_editor", "self_upgrade", "runtime_upgrade", "terminal_open", "terminal_input", "terminal_resize", "terminal_close", "terminal_attach", "terminal_list", "terminal_interrupt", "host_exec", "file_upload", "public_ip_lookup_config", "node_proxy_config", "tool_run_request", "tool_run_stop", "manage_environment", "sync_environment", "inspect_environment", "ios_discover", "ios_claim_device", "ios_release_device", "ios_configure_device", "ios_wda_job", "ios_job_cancel", "inspect_system_env", "sync_system_env", "archive_system_env_resource", "node_build", "node_build_cancel", "install_host_tool")
+    __slots__ = ("server_frame_id", "created_at", "registered", "create_session", "delete_session", "list_sessions", "error", "tunnel_request", "session_input", "create_execution_node", "delete_execution_node", "server_hello", "configure_session_llm", "apply_session_mcps", "apply_session_skills", "apply_session_plugins", "start_session_runtime", "restart_session_runtime", "configure_session_mode", "collect_session_artifacts", "proxy_request", "manage_editor", "self_upgrade", "runtime_upgrade", "terminal_open", "terminal_input", "terminal_resize", "terminal_close", "terminal_attach", "terminal_list", "terminal_interrupt", "host_exec", "file_upload", "public_ip_lookup_config", "node_proxy_config", "tool_run_request", "tool_run_stop", "manage_environment", "sync_environment", "inspect_environment", "ios_discover", "ios_claim_device", "ios_release_device", "ios_configure_device", "ios_wda_job", "ios_job_cancel", "inspect_system_env", "sync_system_env", "archive_system_env_resource", "node_build", "node_build_cancel", "install_host_tool", "host_tool_job", "host_tool_job_cancel", "refresh_labels")
     SERVER_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     REGISTERED_FIELD_NUMBER: _ClassVar[int]
@@ -2206,6 +2210,9 @@ class NodeDownstreamFrame(_message.Message):
     NODE_BUILD_FIELD_NUMBER: _ClassVar[int]
     NODE_BUILD_CANCEL_FIELD_NUMBER: _ClassVar[int]
     INSTALL_HOST_TOOL_FIELD_NUMBER: _ClassVar[int]
+    HOST_TOOL_JOB_FIELD_NUMBER: _ClassVar[int]
+    HOST_TOOL_JOB_CANCEL_FIELD_NUMBER: _ClassVar[int]
+    REFRESH_LABELS_FIELD_NUMBER: _ClassVar[int]
     server_frame_id: str
     created_at: str
     registered: NodeRegistered
@@ -2258,7 +2265,14 @@ class NodeDownstreamFrame(_message.Message):
     node_build: NodeBuildRequest
     node_build_cancel: NodeBuildCancel
     install_host_tool: NodeInstallHostTool
-    def __init__(self, server_frame_id: _Optional[str] = ..., created_at: _Optional[str] = ..., registered: _Optional[_Union[NodeRegistered, _Mapping]] = ..., create_session: _Optional[_Union[NodeCreateSession, _Mapping]] = ..., delete_session: _Optional[_Union[NodeDeleteSession, _Mapping]] = ..., list_sessions: _Optional[_Union[NodeListSessions, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_request: _Optional[_Union[NodeTunnelRequest, _Mapping]] = ..., session_input: _Optional[_Union[NodeSessionInput, _Mapping]] = ..., create_execution_node: _Optional[_Union[NodeCreateExecutionNode, _Mapping]] = ..., delete_execution_node: _Optional[_Union[NodeDeleteExecutionNode, _Mapping]] = ..., server_hello: _Optional[_Union[NodeServerHello, _Mapping]] = ..., configure_session_llm: _Optional[_Union[ConfigureSessionLLM, _Mapping]] = ..., apply_session_mcps: _Optional[_Union[ApplySessionMCPs, _Mapping]] = ..., apply_session_skills: _Optional[_Union[ApplySessionSkills, _Mapping]] = ..., apply_session_plugins: _Optional[_Union[ApplySessionPlugins, _Mapping]] = ..., start_session_runtime: _Optional[_Union[StartSessionRuntime, _Mapping]] = ..., restart_session_runtime: _Optional[_Union[RestartSessionRuntime, _Mapping]] = ..., configure_session_mode: _Optional[_Union[ConfigureSessionMode, _Mapping]] = ..., collect_session_artifacts: _Optional[_Union[CollectSessionArtifacts, _Mapping]] = ..., proxy_request: _Optional[_Union[NodeProxyRequest, _Mapping]] = ..., manage_editor: _Optional[_Union[NodeManageEditor, _Mapping]] = ..., self_upgrade: _Optional[_Union[NodeSelfUpgrade, _Mapping]] = ..., runtime_upgrade: _Optional[_Union[NodeRuntimeUpgrade, _Mapping]] = ..., terminal_open: _Optional[_Union[NodeTerminalOpen, _Mapping]] = ..., terminal_input: _Optional[_Union[NodeTerminalInput, _Mapping]] = ..., terminal_resize: _Optional[_Union[NodeTerminalResize, _Mapping]] = ..., terminal_close: _Optional[_Union[NodeTerminalClose, _Mapping]] = ..., terminal_attach: _Optional[_Union[NodeTerminalAttach, _Mapping]] = ..., terminal_list: _Optional[_Union[NodeTerminalListRequest, _Mapping]] = ..., terminal_interrupt: _Optional[_Union[NodeTerminalInterrupt, _Mapping]] = ..., host_exec: _Optional[_Union[NodeHostExecRequest, _Mapping]] = ..., file_upload: _Optional[_Union[NodeFileUploadRequest, _Mapping]] = ..., public_ip_lookup_config: _Optional[_Union[NodePublicIPLookupConfig, _Mapping]] = ..., node_proxy_config: _Optional[_Union[NodeProxyConfig, _Mapping]] = ..., tool_run_request: _Optional[_Union[NodeToolRunRequest, _Mapping]] = ..., tool_run_stop: _Optional[_Union[NodeToolRunStop, _Mapping]] = ..., manage_environment: _Optional[_Union[NodeManageEnvironment, _Mapping]] = ..., sync_environment: _Optional[_Union[NodeSyncEnvironment, _Mapping]] = ..., inspect_environment: _Optional[_Union[NodeInspectEnvironment, _Mapping]] = ..., ios_discover: _Optional[_Union[NodeIosDiscover, _Mapping]] = ..., ios_claim_device: _Optional[_Union[NodeIosClaimDevice, _Mapping]] = ..., ios_release_device: _Optional[_Union[NodeIosReleaseDevice, _Mapping]] = ..., ios_configure_device: _Optional[_Union[NodeIosConfigureDevice, _Mapping]] = ..., ios_wda_job: _Optional[_Union[NodeIosWdaJobRequest, _Mapping]] = ..., ios_job_cancel: _Optional[_Union[NodeIosJobCancel, _Mapping]] = ..., inspect_system_env: _Optional[_Union[NodeInspectSystemEnv, _Mapping]] = ..., sync_system_env: _Optional[_Union[NodeSyncSystemEnv, _Mapping]] = ..., archive_system_env_resource: _Optional[_Union[NodeArchiveSystemEnvResource, _Mapping]] = ..., node_build: _Optional[_Union[NodeBuildRequest, _Mapping]] = ..., node_build_cancel: _Optional[_Union[NodeBuildCancel, _Mapping]] = ..., install_host_tool: _Optional[_Union[NodeInstallHostTool, _Mapping]] = ...) -> None: ...
+    host_tool_job: NodeHostToolJob
+    host_tool_job_cancel: NodeHostToolJobCancel
+    refresh_labels: NodeRefreshLabelsRequest
+    def __init__(self, server_frame_id: _Optional[str] = ..., created_at: _Optional[str] = ..., registered: _Optional[_Union[NodeRegistered, _Mapping]] = ..., create_session: _Optional[_Union[NodeCreateSession, _Mapping]] = ..., delete_session: _Optional[_Union[NodeDeleteSession, _Mapping]] = ..., list_sessions: _Optional[_Union[NodeListSessions, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_request: _Optional[_Union[NodeTunnelRequest, _Mapping]] = ..., session_input: _Optional[_Union[NodeSessionInput, _Mapping]] = ..., create_execution_node: _Optional[_Union[NodeCreateExecutionNode, _Mapping]] = ..., delete_execution_node: _Optional[_Union[NodeDeleteExecutionNode, _Mapping]] = ..., server_hello: _Optional[_Union[NodeServerHello, _Mapping]] = ..., configure_session_llm: _Optional[_Union[ConfigureSessionLLM, _Mapping]] = ..., apply_session_mcps: _Optional[_Union[ApplySessionMCPs, _Mapping]] = ..., apply_session_skills: _Optional[_Union[ApplySessionSkills, _Mapping]] = ..., apply_session_plugins: _Optional[_Union[ApplySessionPlugins, _Mapping]] = ..., start_session_runtime: _Optional[_Union[StartSessionRuntime, _Mapping]] = ..., restart_session_runtime: _Optional[_Union[RestartSessionRuntime, _Mapping]] = ..., configure_session_mode: _Optional[_Union[ConfigureSessionMode, _Mapping]] = ..., collect_session_artifacts: _Optional[_Union[CollectSessionArtifacts, _Mapping]] = ..., proxy_request: _Optional[_Union[NodeProxyRequest, _Mapping]] = ..., manage_editor: _Optional[_Union[NodeManageEditor, _Mapping]] = ..., self_upgrade: _Optional[_Union[NodeSelfUpgrade, _Mapping]] = ..., runtime_upgrade: _Optional[_Union[NodeRuntimeUpgrade, _Mapping]] = ..., terminal_open: _Optional[_Union[NodeTerminalOpen, _Mapping]] = ..., terminal_input: _Optional[_Union[NodeTerminalInput, _Mapping]] = ..., terminal_resize: _Optional[_Union[NodeTerminalResize, _Mapping]] = ..., terminal_close: _Optional[_Union[NodeTerminalClose, _Mapping]] = ..., terminal_attach: _Optional[_Union[NodeTerminalAttach, _Mapping]] = ..., terminal_list: _Optional[_Union[NodeTerminalListRequest, _Mapping]] = ..., terminal_interrupt: _Optional[_Union[NodeTerminalInterrupt, _Mapping]] = ..., host_exec: _Optional[_Union[NodeHostExecRequest, _Mapping]] = ..., file_upload: _Optional[_Union[NodeFileUploadRequest, _Mapping]] = ..., public_ip_lookup_config: _Optional[_Union[NodePublicIPLookupConfig, _Mapping]] = ..., node_proxy_config: _Optional[_Union[NodeProxyConfig, _Mapping]] = ..., tool_run_request: _Optional[_Union[NodeToolRunRequest, _Mapping]] = ..., tool_run_stop: _Optional[_Union[NodeToolRunStop, _Mapping]] = ..., manage_environment: _Optional[_Union[NodeManageEnvironment, _Mapping]] = ..., sync_environment: _Optional[_Union[NodeSyncEnvironment, _Mapping]] = ..., inspect_environment: _Optional[_Union[NodeInspectEnvironment, _Mapping]] = ..., ios_discover: _Optional[_Union[NodeIosDiscover, _Mapping]] = ..., ios_claim_device: _Optional[_Union[NodeIosClaimDevice, _Mapping]] = ..., ios_release_device: _Optional[_Union[NodeIosReleaseDevice, _Mapping]] = ..., ios_configure_device: _Optional[_Union[NodeIosConfigureDevice, _Mapping]] = ..., ios_wda_job: _Optional[_Union[NodeIosWdaJobRequest, _Mapping]] = ..., ios_job_cancel: _Optional[_Union[NodeIosJobCancel, _Mapping]] = ..., inspect_system_env: _Optional[_Union[NodeInspectSystemEnv, _Mapping]] = ..., sync_system_env: _Optional[_Union[NodeSyncSystemEnv, _Mapping]] = ..., archive_system_env_resource: _Optional[_Union[NodeArchiveSystemEnvResource, _Mapping]] = ..., node_build: _Optional[_Union[NodeBuildRequest, _Mapping]] = ..., node_build_cancel: _Optional[_Union[NodeBuildCancel, _Mapping]] = ..., install_host_tool: _Optional[_Union[NodeInstallHostTool, _Mapping]] = ..., host_tool_job: _Optional[_Union[NodeHostToolJob, _Mapping]] = ..., host_tool_job_cancel: _Optional[_Union[NodeHostToolJobCancel, _Mapping]] = ..., refresh_labels: _Optional[_Union[NodeRefreshLabelsRequest, _Mapping]] = ...) -> None: ...
+
+class NodeRefreshLabelsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
 
 class NodeManageEnvironment(_message.Message):
     __slots__ = ("env_id", "action")
@@ -2666,10 +2680,12 @@ class NodeRegister(_message.Message):
     def __init__(self, node_id: _Optional[str] = ..., totp_code: _Optional[str] = ..., node_name: _Optional[str] = ..., capabilities: _Optional[_Union[NodeCapabilities, _Mapping]] = ..., role: _Optional[_Union[NodeRole, str]] = ...) -> None: ...
 
 class NodeServerHello(_message.Message):
-    __slots__ = ("server_time",)
+    __slots__ = ("server_time", "gateway_origin")
     SERVER_TIME_FIELD_NUMBER: _ClassVar[int]
+    GATEWAY_ORIGIN_FIELD_NUMBER: _ClassVar[int]
     server_time: str
-    def __init__(self, server_time: _Optional[str] = ...) -> None: ...
+    gateway_origin: str
+    def __init__(self, server_time: _Optional[str] = ..., gateway_origin: _Optional[str] = ...) -> None: ...
 
 class EditorModeSemantics(_message.Message):
     __slots__ = ("can_read", "can_edit_workspace", "can_run_commands", "requires_approval", "network_access")
@@ -2860,7 +2876,7 @@ class NodeRegistered(_message.Message):
     def __init__(self, node_id: _Optional[str] = ..., status: _Optional[_Union[NodeStatus, str]] = ..., server_time: _Optional[str] = ..., online: _Optional[bool] = ...) -> None: ...
 
 class NodeCreateSession(_message.Message):
-    __slots__ = ("session_id", "project_id", "provider", "model", "git", "llm", "mcps", "skills", "plugins", "env", "volumes", "tags", "driver", "guest_image", "interactive", "mode", "defer_start", "editor_id", "editor_session_id", "task_id", "env_mode", "env_id", "active_skills", "active_plugins")
+    __slots__ = ("session_id", "project_id", "provider", "model", "git", "llm", "mcps", "skills", "plugins", "env", "volumes", "tags", "driver", "guest_image", "interactive", "mode", "defer_start", "editor_id", "editor_session_id", "task_id", "env_mode", "env_id", "active_skills", "active_plugins", "system_prompt")
     class TagsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -2892,6 +2908,7 @@ class NodeCreateSession(_message.Message):
     ENV_ID_FIELD_NUMBER: _ClassVar[int]
     ACTIVE_SKILLS_FIELD_NUMBER: _ClassVar[int]
     ACTIVE_PLUGINS_FIELD_NUMBER: _ClassVar[int]
+    SYSTEM_PROMPT_FIELD_NUMBER: _ClassVar[int]
     session_id: str
     project_id: str
     provider: str
@@ -2916,7 +2933,8 @@ class NodeCreateSession(_message.Message):
     env_id: str
     active_skills: _containers.RepeatedScalarFieldContainer[str]
     active_plugins: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, session_id: _Optional[str] = ..., project_id: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., git: _Optional[_Union[NodeGitSpec, _Mapping]] = ..., llm: _Optional[_Union[NodeLLMConfig, _Mapping]] = ..., mcps: _Optional[_Iterable[_Union[MCPServerSpec, _Mapping]]] = ..., skills: _Optional[_Iterable[_Union[SkillSpec, _Mapping]]] = ..., plugins: _Optional[_Iterable[_Union[NodePluginSpec, _Mapping]]] = ..., env: _Optional[_Iterable[_Union[EnvVarSpec, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[VolumeMountSpec, _Mapping]]] = ..., tags: _Optional[_Mapping[str, str]] = ..., driver: _Optional[str] = ..., guest_image: _Optional[str] = ..., interactive: _Optional[bool] = ..., mode: _Optional[str] = ..., defer_start: _Optional[bool] = ..., editor_id: _Optional[str] = ..., editor_session_id: _Optional[str] = ..., task_id: _Optional[str] = ..., env_mode: _Optional[str] = ..., env_id: _Optional[str] = ..., active_skills: _Optional[_Iterable[str]] = ..., active_plugins: _Optional[_Iterable[str]] = ...) -> None: ...
+    system_prompt: str
+    def __init__(self, session_id: _Optional[str] = ..., project_id: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., git: _Optional[_Union[NodeGitSpec, _Mapping]] = ..., llm: _Optional[_Union[NodeLLMConfig, _Mapping]] = ..., mcps: _Optional[_Iterable[_Union[MCPServerSpec, _Mapping]]] = ..., skills: _Optional[_Iterable[_Union[SkillSpec, _Mapping]]] = ..., plugins: _Optional[_Iterable[_Union[NodePluginSpec, _Mapping]]] = ..., env: _Optional[_Iterable[_Union[EnvVarSpec, _Mapping]]] = ..., volumes: _Optional[_Iterable[_Union[VolumeMountSpec, _Mapping]]] = ..., tags: _Optional[_Mapping[str, str]] = ..., driver: _Optional[str] = ..., guest_image: _Optional[str] = ..., interactive: _Optional[bool] = ..., mode: _Optional[str] = ..., defer_start: _Optional[bool] = ..., editor_id: _Optional[str] = ..., editor_session_id: _Optional[str] = ..., task_id: _Optional[str] = ..., env_mode: _Optional[str] = ..., env_id: _Optional[str] = ..., active_skills: _Optional[_Iterable[str]] = ..., active_plugins: _Optional[_Iterable[str]] = ..., system_prompt: _Optional[str] = ...) -> None: ...
 
 class NodeGitSpec(_message.Message):
     __slots__ = ("url", "branch", "commit", "create_branch", "new_branch", "username", "password", "token")
@@ -3240,7 +3258,7 @@ class NodeSessionStage(_message.Message):
     def __init__(self, session_id: _Optional[str] = ..., stage: _Optional[_Union[SessionStage, str]] = ..., ok: _Optional[bool] = ..., detail: _Optional[str] = ..., error: _Optional[str] = ..., created_at: _Optional[str] = ...) -> None: ...
 
 class NodeCommandAck(_message.Message):
-    __slots__ = ("server_frame_id", "ok", "error", "sessions", "applied_revision", "effective_revision", "restart_required", "editor_version", "environment_inventory", "system_env_inventory", "node_version", "npm_version", "xcodebuild_version")
+    __slots__ = ("server_frame_id", "ok", "error", "sessions", "applied_revision", "effective_revision", "restart_required", "editor_version", "environment_inventory", "system_env_inventory", "node_version", "npm_version", "xcodebuild_version", "refreshed_capabilities")
     SERVER_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     OK_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -3254,6 +3272,7 @@ class NodeCommandAck(_message.Message):
     NODE_VERSION_FIELD_NUMBER: _ClassVar[int]
     NPM_VERSION_FIELD_NUMBER: _ClassVar[int]
     XCODEBUILD_VERSION_FIELD_NUMBER: _ClassVar[int]
+    REFRESHED_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
     server_frame_id: str
     ok: bool
     error: str
@@ -3267,7 +3286,8 @@ class NodeCommandAck(_message.Message):
     node_version: str
     npm_version: str
     xcodebuild_version: str
-    def __init__(self, server_frame_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error: _Optional[str] = ..., sessions: _Optional[_Iterable[_Union[NodeSessionSummary, _Mapping]]] = ..., applied_revision: _Optional[int] = ..., effective_revision: _Optional[int] = ..., restart_required: _Optional[bool] = ..., editor_version: _Optional[str] = ..., environment_inventory: _Optional[_Iterable[_Union[NodeEnvironmentEntry, _Mapping]]] = ..., system_env_inventory: _Optional[_Iterable[_Union[NodeSystemEnvEntry, _Mapping]]] = ..., node_version: _Optional[str] = ..., npm_version: _Optional[str] = ..., xcodebuild_version: _Optional[str] = ...) -> None: ...
+    refreshed_capabilities: NodeCapabilities
+    def __init__(self, server_frame_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error: _Optional[str] = ..., sessions: _Optional[_Iterable[_Union[NodeSessionSummary, _Mapping]]] = ..., applied_revision: _Optional[int] = ..., effective_revision: _Optional[int] = ..., restart_required: _Optional[bool] = ..., editor_version: _Optional[str] = ..., environment_inventory: _Optional[_Iterable[_Union[NodeEnvironmentEntry, _Mapping]]] = ..., system_env_inventory: _Optional[_Iterable[_Union[NodeSystemEnvEntry, _Mapping]]] = ..., node_version: _Optional[str] = ..., npm_version: _Optional[str] = ..., xcodebuild_version: _Optional[str] = ..., refreshed_capabilities: _Optional[_Union[NodeCapabilities, _Mapping]] = ...) -> None: ...
 
 class NodeSessionSummary(_message.Message):
     __slots__ = ("session_id", "project_id", "provider")
@@ -4202,3 +4222,75 @@ class NodeBuildResult(_message.Message):
     artifact_sha256: str
     artifact_size_bytes: int
     def __init__(self, build_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., retryable: _Optional[bool] = ..., stage_reached: _Optional[str] = ..., artifact_sha256: _Optional[str] = ..., artifact_size_bytes: _Optional[int] = ...) -> None: ...
+
+class NodeHostToolJob(_message.Message):
+    __slots__ = ("job_id", "tool", "target_version", "download_url", "download_size_bytes", "sha256", "timeout_seconds", "proxy_mode", "proxy_url", "proxy_url_prefix")
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_FIELD_NUMBER: _ClassVar[int]
+    TARGET_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DOWNLOAD_URL_FIELD_NUMBER: _ClassVar[int]
+    DOWNLOAD_SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
+    SHA256_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    PROXY_MODE_FIELD_NUMBER: _ClassVar[int]
+    PROXY_URL_FIELD_NUMBER: _ClassVar[int]
+    PROXY_URL_PREFIX_FIELD_NUMBER: _ClassVar[int]
+    job_id: str
+    tool: str
+    target_version: str
+    download_url: str
+    download_size_bytes: int
+    sha256: str
+    timeout_seconds: int
+    proxy_mode: str
+    proxy_url: str
+    proxy_url_prefix: str
+    def __init__(self, job_id: _Optional[str] = ..., tool: _Optional[str] = ..., target_version: _Optional[str] = ..., download_url: _Optional[str] = ..., download_size_bytes: _Optional[int] = ..., sha256: _Optional[str] = ..., timeout_seconds: _Optional[int] = ..., proxy_mode: _Optional[str] = ..., proxy_url: _Optional[str] = ..., proxy_url_prefix: _Optional[str] = ...) -> None: ...
+
+class NodeHostToolJobCancel(_message.Message):
+    __slots__ = ("job_id",)
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    job_id: str
+    def __init__(self, job_id: _Optional[str] = ...) -> None: ...
+
+class NodeHostToolJobEvent(_message.Message):
+    __slots__ = ("job_id", "seq", "stage", "message", "percent", "reported_at", "log_tail", "current_bytes", "total_bytes")
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    STAGE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PERCENT_FIELD_NUMBER: _ClassVar[int]
+    REPORTED_AT_FIELD_NUMBER: _ClassVar[int]
+    LOG_TAIL_FIELD_NUMBER: _ClassVar[int]
+    CURRENT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BYTES_FIELD_NUMBER: _ClassVar[int]
+    job_id: str
+    seq: int
+    stage: str
+    message: str
+    percent: int
+    reported_at: str
+    log_tail: str
+    current_bytes: int
+    total_bytes: int
+    def __init__(self, job_id: _Optional[str] = ..., seq: _Optional[int] = ..., stage: _Optional[str] = ..., message: _Optional[str] = ..., percent: _Optional[int] = ..., reported_at: _Optional[str] = ..., log_tail: _Optional[str] = ..., current_bytes: _Optional[int] = ..., total_bytes: _Optional[int] = ...) -> None: ...
+
+class NodeHostToolJobResult(_message.Message):
+    __slots__ = ("job_id", "ok", "error_code", "error_message", "retryable", "stage_reached", "xcodebuild_version", "app_path")
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    OK_FIELD_NUMBER: _ClassVar[int]
+    ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    RETRYABLE_FIELD_NUMBER: _ClassVar[int]
+    STAGE_REACHED_FIELD_NUMBER: _ClassVar[int]
+    XCODEBUILD_VERSION_FIELD_NUMBER: _ClassVar[int]
+    APP_PATH_FIELD_NUMBER: _ClassVar[int]
+    job_id: str
+    ok: bool
+    error_code: str
+    error_message: str
+    retryable: bool
+    stage_reached: str
+    xcodebuild_version: str
+    app_path: str
+    def __init__(self, job_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., retryable: _Optional[bool] = ..., stage_reached: _Optional[str] = ..., xcodebuild_version: _Optional[str] = ..., app_path: _Optional[str] = ...) -> None: ...

@@ -139,9 +139,18 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
     await _send_start(send)
 
     # 1. Server hello (authoritative time) before the node registers.
+    #    gateway_origin 一并通告：MCP SSE 网关在数据服务上，不在本控制面——
+    #    节点拿它把会话 spec 里的相对 MCP url 拼成可达的绝对地址。空值（未推导
+    #    出）时节点回退用自己拨号的本控制面地址（老行为）。
+    from . import config as node_server_config
+
     server_time = crypto.utc_now()
     hello = pb.NodeDownstreamFrame(created_at=crypto.rfc3339nano(server_time))
-    hello.server_hello.CopyFrom(pb.NodeServerHello(server_time=crypto.rfc3339nano(server_time)))
+    gateway_origin = (node_server_config.settings.gateway_public_url or "").strip().rstrip("/")
+    hello.server_hello.CopyFrom(pb.NodeServerHello(
+        server_time=crypto.rfc3339nano(server_time),
+        gateway_origin=gateway_origin,
+    ))
     await _send_body(send, envelope.encode_message(hello))
 
     # 2. Await the register frame + authenticate.

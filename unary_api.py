@@ -198,7 +198,7 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
             # the node stream, but no standalone unary request messages. Keep
             # their Connect JSON shape explicit until the proto service surface
             # is regenerated with dedicated request/response messages.
-            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild"}:
+            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild", "StartHostToolJob", "GetHostToolJobStatus", "CancelHostToolJob", "RefreshNodeLabels"}:
                 import json
 
                 payload = json.loads((body or b"{}").decode("utf-8") or "{}")
@@ -209,6 +209,8 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                     data = {"node": json_format.MessageToDict(service.node_info(record), preserving_proto_field_name=False)}
                 elif method == "ManageEditor":
                     data = await service.manage_editor(payload.get("nodeId", ""), payload.get("editor", ""), payload.get("action", ""))
+                elif method == "RefreshNodeLabels":
+                    data = await service.refresh_node_labels(payload.get("nodeId", ""))
                 elif method == "SelfUpgradeNode":
                     data = await service.self_upgrade_node(
                         payload.get("nodeId", ""), target=payload.get("target") or None
@@ -364,6 +366,30 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                     data = await service.cancel_node_build(
                         payload.get("nodeId", ""),
                         payload.get("buildId", ""),
+                    )
+                elif method == "StartHostToolJob":
+                    data = await service.start_host_tool_job(
+                        payload.get("nodeId", ""),
+                        payload.get("jobId", ""),
+                        tool=payload.get("tool", "xcode"),
+                        target_version=payload.get("targetVersion", ""),
+                        download_url=payload.get("downloadUrl", ""),
+                        download_size_bytes=max(int(payload.get("downloadSizeBytes", 0) or 0), 0),
+                        sha256=payload.get("sha256", ""),
+                        proxy_mode=payload.get("proxyMode", ""),
+                        proxy_url=payload.get("proxyUrl", ""),
+                        proxy_url_prefix=payload.get("proxyUrlPrefix", ""),
+                        timeout_seconds=max(int(payload.get("timeoutSeconds", 0) or 0), 0),
+                    )
+                elif method == "GetHostToolJobStatus":
+                    data = await service.get_host_tool_job_status(
+                        payload.get("nodeId", ""),
+                        payload.get("jobId", ""),
+                    )
+                elif method == "CancelHostToolJob":
+                    data = await service.cancel_host_tool_job(
+                        payload.get("nodeId", ""),
+                        payload.get("jobId", ""),
                     )
                 else:
                     req = pb.NodeHostExecRequest(

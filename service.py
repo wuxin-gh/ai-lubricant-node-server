@@ -58,6 +58,11 @@ NODE_HEARTBEAT_TIMEOUT = timedelta(seconds=60)
 # How long DispatchSession / config commands wait for the node's ack.
 DISPATCH_ACK_TIMEOUT = 30.0  # seconds
 
+# RefreshLabels: the node's own re-probe budget is 30s (editor/host-tool
+# --version probes each carry short internal timeouts); the ack window covers
+# that plus the round trip.
+REFRESH_LABELS_ACK_TIMEOUT = 45.0  # seconds
+
 # Binary file upload limits are enforced at every layer. Keeping them here too
 # prevents a direct Connect caller from sending an oversized frame to the node.
 MAX_UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -1129,6 +1134,23 @@ class NodeService:
             conn.update_build_snapshot_event(frame.node_build_event)
         elif which == "node_build_result":
             conn.deliver_build_result(frame.node_build_result)
+        elif which == "host_tool_job_event":
+            conn.deliver_host_tool_event(frame.host_tool_job_event)
+            conn.update_host_tool_snapshot_event(frame.host_tool_job_event)
+        elif which == "host_tool_job_result":
+            conn.deliver_host_tool_result(frame.host_tool_job_result)
+            # Fold the freshly probed xcodebuild version into the node's
+            # capability labels right away — same as the sync InstallHostTool
+            # ack does — so the server's tables see the new Xcode without
+            # waiting for the next register.
+            result = frame.host_tool_job_result
+            if result.ok and (result.xcodebuild_version or "").strip():
+                try:
+                    await self._store_host_tool_versions(
+                        node_id, "", "", (result.xcodebuild_version or "").strip()
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("[nodeserver] host-tool result version store failed: {}", exc)
         elif which == "error":
             conn.note_error(frame.error.code, frame.error.message)
 
@@ -1175,7 +1197,13 @@ class NodeService:
                     missing.append("npm")
                 if not (caps.get("runtime_version") or "").strip():
                     missing.append("agent-compose runtime")
-                if not (caps.get("providers") or "").strip():
+                # 编辑器「是否已装」真相源是 capabilities.editors 数组（节点注册探测
+                # 并结构化上报）；兼容老节点只有 providers 逗号串的情况。两者都缺才算
+                # 未装——某些节点漏报 providers 串（只有 editors 数组），导致装了编辑器
+                # 仍被判未装、审批被拦。
+                editors_json = (caps.get("editors_json") or "").strip()
+                has_editors = bool(editors_json) and editors_json not in ("[]", "null")
+                if not (caps.get("providers") or "").strip() and not has_editors:
                     missing.append("至少一个编辑器客户端")
             if missing:
                 raise RPCError(
@@ -1608,6 +1636,74 @@ class NodeService:
             await self.store.upsert_node(record)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[nodeserver] persist editor version failed {}: {}", node_id, exc)
+
+    # ── RefreshLabels (re-probe the node's capability labels without a restart) ─
+    async def refresh_node_labels(self, node_id: str) -> dict:
+        """Ask a connected node to re-probe every capability label and fold the
+        reply into the node's stored capabilities.
+
+        This is the operator's "刷新标签" path: after installing an editor / a
+        host tool / anything else on the node host, the console refreshes what
+        the node advertises without waiting for a node restart. The node replies
+        with the same NodeCapabilities shape it registers with, so the folding
+        below cannot disagree with what a re-register would advertise.
+
+        Server-added bookkeeping (role / hostname / server_seen_address) is
+        merged from the stored record: the node does not report those, and they
+        must not be lost by the refresh.
+        """
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        record = await self.store.get_node_if_exists(node_id)
+        if record is None:
+            raise RPCError(Code.NOT_FOUND, f"node {node_id} not found")
+        conn = self.registry.lookup(node_id)
+        if conn is None:
+            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
+
+        frame_id = str(uuid.uuid4())
+        ack_future = conn.await_ack(frame_id)
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=frame_id,
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.refresh_labels.CopyFrom(pb.NodeRefreshLabelsRequest())
+        try:
+            conn.send(frame)
+        except Exception as exc:  # noqa: BLE001
+            conn.cancel_ack(frame_id)
+            raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
+        # The probe budget on the node is 30s (refreshLabelsProbeTimeout); leave
+        # slack for the round trip. An older node that does not know the frame
+        # logs it server-side and never acks — the timeout surfaces that here.
+        try:
+            ack = await asyncio.wait_for(ack_future, timeout=REFRESH_LABELS_ACK_TIMEOUT)
+        except asyncio.TimeoutError:
+            conn.cancel_ack(frame_id)
+            raise RPCError(
+                Code.DEADLINE_EXCEEDED,
+                f"node {node_id} did not answer the label refresh within "
+                f"{int(REFRESH_LABELS_ACK_TIMEOUT)}s; the node may be an older "
+                "build that predates the refresh_labels frame — upgrade the node",
+            )
+        if ack is None or not ack.ok:
+            message = (getattr(ack, "error", "") or "").strip() or "node reported failure"
+            raise RPCError(Code.INTERNAL, f"refresh labels on {node_id} failed: {message}")
+        caps = ack.refreshed_capabilities if ack.HasField("refreshed_capabilities") else None
+        if caps is None:
+            raise RPCError(Code.INTERNAL, f"node {node_id} acked the refresh without capabilities")
+        labels = _capability_labels(caps)
+        merged = dict(record.capabilities or {})
+        merged.update(labels)
+        if record.role:
+            merged["role"] = record.role
+        record.capabilities = merged
+        try:
+            await self.store.upsert_node(record)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[nodeserver] persist refreshed labels failed {}: {}", node_id, exc)
+        return {"node_id": node_id, "labels": merged}
 
     # ── InstallHostTool (install Node.js on the node host) ─────────────────────
     async def install_host_tool(self, node_id: str, tool: str, *, target: dict | None = None) -> dict:
@@ -2503,6 +2599,134 @@ class NodeService:
         except Exception as exc:
             raise RPCError(Code.INTERNAL, f"cancel_node_build on {node_id} failed: {exc}") from exc
         return {"node_id": node_id, "build_id": build_id, "cancelled": True}
+
+    # ── host-tool install jobs (async Xcode; mirrors the build job trio) ──────
+
+    HOST_TOOL_JOB_ACK_TIMEOUT = 30.0  # job accepted (not completed; the install runs for hours)
+
+    async def start_host_tool_job(
+        self,
+        node_id: str,
+        job_id: str,
+        *,
+        tool: str = "xcode",
+        target_version: str = "",
+        download_url: str = "",
+        download_size_bytes: int = 0,
+        sha256: str = "",
+        proxy_mode: str = "",
+        proxy_url: str = "",
+        proxy_url_prefix: str = "",
+        timeout_seconds: int = 0,
+    ) -> dict:
+        """Dispatch a host-tool install job (currently Xcode) to a node.
+
+        Returns immediately after the node acks receipt (not completion). The
+        node streams NodeHostToolJobEvent frames as progress and sends exactly
+        one NodeHostToolJobResult when done. job_id is caller-provided (UUID
+        from the data side) so the data side can correlate progress/result.
+        The download URL/proxy fields are resolved by the caller (the release
+        catalogue and proxy pool live on the data side), same split as
+        runtime upgrades.
+        """
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        tool = (tool or "").strip().lower()
+        if tool != "xcode":
+            raise RPCError(Code.INVALID_ARGUMENT, f"unsupported host-tool job {tool!r}; supported: xcode")
+        record = await self.store.get_node_if_exists(node_id)
+        if record is None:
+            raise RPCError(Code.NOT_FOUND, f"node {node_id} not found")
+        if _is_passive_manager(record):
+            raise RPCError(
+                Code.FAILED_PRECONDITION,
+                f"node {node_id} is a grouping container with no client; nothing to install on",
+            )
+        caps = record.capabilities or {}
+        if (caps.get("os") or "").lower() != "darwin":
+            raise RPCError(
+                Code.FAILED_PRECONDITION,
+                f"node {node_id} is not a macOS host; Xcode installs need darwin",
+            )
+        conn = self.registry.lookup(node_id)
+        if conn is None:
+            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
+
+        frame_id = str(uuid.uuid4())
+        ack_future = conn.await_ack(frame_id)
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=frame_id,
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.host_tool_job.CopyFrom(
+            pb.NodeHostToolJob(
+                job_id=job_id,
+                tool=tool,
+                target_version=target_version,
+                download_url=download_url,
+                download_size_bytes=int(download_size_bytes or 0),
+                sha256=sha256,
+                timeout_seconds=int(timeout_seconds or 0),
+                proxy_mode=proxy_mode,
+                proxy_url=proxy_url,
+                proxy_url_prefix=proxy_url_prefix,
+            )
+        )
+
+        # Initialize the snapshot before send (like the build/WDA dispatch) so
+        # a fast progress event cannot race the init.
+        conn.init_host_tool_snapshot(job_id, tool, node_id, target_version)
+
+        try:
+            conn.send(frame)
+            ack = await asyncio.wait_for(ack_future, timeout=self.HOST_TOOL_JOB_ACK_TIMEOUT)
+        except asyncio.TimeoutError:
+            conn.cancel_ack(frame_id)
+            raise RPCError(
+                Code.DEADLINE_EXCEEDED,
+                f"start_host_tool_job on {node_id} timed out (job may still start)",
+            ) from None
+        except Exception as exc:
+            conn.cancel_ack(frame_id)
+            raise RPCError(Code.INTERNAL, f"start_host_tool_job on {node_id} failed: {exc}") from exc
+
+        if not ack.ok:
+            message = ack.error_message or "node rejected the host-tool job"
+            raise RPCError(Code.INTERNAL, f"start_host_tool_job on {node_id} failed: {message}")
+        return {"node_id": node_id, "job_id": job_id, "tool": tool, "status": "accepted"}
+
+    async def get_host_tool_job_status(self, node_id: str, job_id: str) -> dict:
+        """Query a host-tool job from the registry snapshot (polling endpoint)."""
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        conn = self.registry.lookup(node_id)
+        if conn is None:
+            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
+        snapshot = conn.get_host_tool_snapshot(job_id)
+        if not snapshot:
+            raise RPCError(Code.NOT_FOUND, f"host-tool job {job_id} not found or already expired")
+        return snapshot
+
+    async def cancel_host_tool_job(self, node_id: str, job_id: str) -> dict:
+        """Cancel a running host-tool job (cooperative at stage boundaries)."""
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        conn = self.registry.lookup(node_id)
+        if conn is None:
+            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=str(uuid.uuid4()),
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.host_tool_job_cancel.CopyFrom(pb.NodeHostToolJobCancel(job_id=job_id))
+        try:
+            conn.send(frame)
+        except Exception as exc:
+            raise RPCError(Code.INTERNAL, f"cancel_host_tool_job on {node_id} failed: {exc}") from exc
+        return {"node_id": node_id, "job_id": job_id, "cancelled": True}
 
     # ── RuntimeUpgrade (download JS runtime archive; no Go restart) ───────────────
     async def runtime_upgrade_node(self, node_id: str, *, target: dict | None = None) -> dict:

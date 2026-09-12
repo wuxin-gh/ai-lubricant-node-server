@@ -53,6 +53,27 @@ def _boolean(env: str, default: bool) -> bool:
     return raw.strip().lower() in _TRUE
 
 
+def _default_gateway_origin() -> str:
+    """返回节点可达的数据服务（MCP 网关）origin。
+
+    控制面与数据服务通常同机但不同端口：控制面默认监听 8003，数据服务
+    默认监听 8001。若 ``AGENT_COMPOSE_NODE_SERVER_PUBLIC_URL`` 已配置非回环
+    地址，就复用它的 scheme/host，仅保留数据服务的 ``SERVER_PORT``；否则
+    回退到本机回环。这样远程节点收到 hello 后不会把 MCP 请求拨到自己的
+    127.0.0.1。
+    """
+    from urllib.parse import urlparse
+
+    server_port = _integer("SERVER_PORT", 8001)
+    node_public = _value("AGENT_COMPOSE_NODE_SERVER_PUBLIC_URL")
+    if node_public:
+        parsed = urlparse(node_public)
+        if parsed.hostname and parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+            scheme = parsed.scheme or "http"
+            return f"{scheme}://{parsed.hostname}:{server_port}"
+    return f"http://127.0.0.1:{server_port}"
+
+
 @dataclass(frozen=True)
 class NodeServerSettings:
     database_url: str
@@ -72,6 +93,13 @@ class NodeServerSettings:
     port: int
     node_terminal_max_active_per_node: int
     node_terminal_detached_ttl_seconds: float
+    # MCP SSE 网关所在的数据服务 origin（scheme://host[:port]）。节点拨的是本
+    # 控制面（host:port，无 /mcp/* 路由），会话 spec 里的相对 MCP url 必须按
+    # 这个 origin 拼绝对地址——经 NodeServerHello.gateway_origin 通告给节点。
+    # 与 user_platform.config.settings.gateway_public_url 同名同语义（显式
+    # AI_LUBRICANT_GATEWAY_PUBLIC_URL 优先；未配 → SERVER_HOST/SERVER_PORT 推导
+    # 回环默认，两个进程同机同 .env 时推导结果一致）。
+    gateway_public_url: str
 
 
 def load_settings() -> NodeServerSettings:
@@ -101,6 +129,7 @@ def load_settings() -> NodeServerSettings:
         port=_integer("NODE_CONTROL_PORT", 8003),
         node_terminal_max_active_per_node=max(1, _integer("NODE_TERMINAL_MAX_ACTIVE_PER_NODE", 10)),
         node_terminal_detached_ttl_seconds=max(60.0, _floating("NODE_TERMINAL_DETACHED_TTL_SECONDS", 1800.0)),
+        gateway_public_url=_value("AI_LUBRICANT_GATEWAY_PUBLIC_URL", legacy="MONKEYCODE_GATEWAY_PUBLIC_URL") or _default_gateway_origin(),
     )
 
 

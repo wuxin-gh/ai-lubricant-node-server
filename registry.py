@@ -168,6 +168,18 @@ class Connection:
         # retryable, error_code, artifact_sha256, artifact_size_bytes,
         # created_at, updated_at, completed_at, events: [...]}.
         self._build_snapshots: dict[str, dict] = {}
+        # ── host-tool install jobs (async Xcode; mirrors _build_jobs) ────────
+        # job_id -> asyncio.Queue[NodeHostToolJobEvent|None].
+        self._host_tool_jobs: dict[str, asyncio.Queue] = {}
+        # job_id -> Future[NodeHostToolJobResult]. The terminal outcome, sent
+        # exactly once.
+        self._host_tool_results: dict[str, asyncio.Future] = {}
+        # job_id -> dict[str, Any]. In-memory snapshots for polling:
+        # {job_id, tool, node_id, status, stage, percent, message, log_tail,
+        # current_bytes, total_bytes, retryable, error_code, target_version,
+        # xcodebuild_version, app_path, created_at, updated_at, completed_at,
+        # events: [...]}.
+        self._host_tool_snapshots: dict[str, dict] = {}
 
     # ── downstream channel ────────────────────────────────────────────────
     async def downstream_get(self) -> Optional["pb.NodeDownstreamFrame"]:
@@ -637,6 +649,7 @@ class Connection:
             "stage": "queued",
             "percent": 0,
             "message": "",
+            "log_tail": "",
             "retryable": False,
             "error_code": "",
             "artifact_sha256": "",
@@ -657,6 +670,12 @@ class Connection:
         snapshot["stage"] = event.stage
         snapshot["message"] = event.message
         snapshot["percent"] = event.percent
+        # The terminal event carries the failed step's bounded output (the
+        # runner's logTail); without this the polling UI shows a bare
+        # "step_failed" and the actual xcodebuild/git error never reaches the
+        # user — they had to shell into the node to see why (same shape as
+        # update_host_tool_snapshot_event).
+        snapshot["log_tail"] = event.log_tail
         snapshot["updated_at"] = now
         snapshot["events"].append({
             "seq": event.seq,
@@ -674,6 +693,120 @@ class Connection:
     def clear_build_snapshot(self, build_id: str) -> None:
         """Remove a build snapshot (after client acknowledges completion)."""
         self._build_snapshots.pop(build_id, None)
+
+    # ── host-tool install jobs (async Xcode; mirror of the build machinery) ──
+
+    def open_host_tool_job(self, job_id: str) -> asyncio.Queue:
+        """Register a queue for one host-tool job's progress events. Mirrors
+        :meth:`open_build_job`: the dispatcher opens the queue before sending
+        ``NodeHostToolJob`` so no progress frame can be missed."""
+        ch: asyncio.Queue = asyncio.Queue(maxsize=TERMINAL_OUTPUT_BUFFER)
+        self._host_tool_jobs[job_id] = ch
+        return ch
+
+    def close_host_tool_job(self, job_id: str) -> None:
+        self._host_tool_jobs.pop(job_id, None)
+
+    def deliver_host_tool_event(self, event: Optional["pb.NodeHostToolJobEvent"]) -> None:
+        """Hand one host-tool job event to its consumer."""
+        if event is None:
+            return
+        ch = self._host_tool_jobs.get(event.job_id)
+        if ch is None:
+            return
+        try:
+            ch.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
+    def await_host_tool_result(self, job_id: str) -> asyncio.Future:
+        """Register a one-shot waiter for a NodeHostToolJobResult. Mirrors
+        :meth:`await_build_result`."""
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._host_tool_results[job_id] = fut
+        return fut
+
+    def cancel_host_tool_result(self, job_id: str) -> None:
+        self._host_tool_results.pop(job_id, None)
+
+    def deliver_host_tool_result(self, result: Optional["pb.NodeHostToolJobResult"]) -> None:
+        """Resolve the terminal outcome future for a host-tool job and mark the
+        snapshot terminal. Mirrors :meth:`deliver_build_result`."""
+        if result is None:
+            return
+        fut = self._host_tool_results.pop(result.job_id, None)
+        if fut is not None and not fut.done():
+            fut.set_result(result)
+        snapshot = self._host_tool_snapshots.get(result.job_id)
+        if snapshot:
+            from . import crypto
+            now = crypto.rfc3339nano(crypto.utc_now())
+            snapshot["status"] = "completed" if result.ok else "failed"
+            snapshot["error_code"] = result.error_code
+            snapshot["message"] = result.error_message
+            snapshot["stage_reached"] = result.stage_reached
+            snapshot["retryable"] = result.retryable
+            snapshot["xcodebuild_version"] = result.xcodebuild_version
+            snapshot["app_path"] = result.app_path
+            snapshot["completed_at"] = now
+            snapshot["updated_at"] = now
+
+    def init_host_tool_snapshot(
+        self, job_id: str, tool: str, node_id: str, target_version: str
+    ) -> None:
+        """Initialize a host-tool job snapshot when the job is dispatched
+        (before send, like the WDA/build dispatch, so a fast progress event
+        cannot race the init)."""
+        from . import crypto
+        now = crypto.rfc3339nano(crypto.utc_now())
+        self._host_tool_snapshots[job_id] = {
+            "job_id": job_id,
+            "tool": tool,
+            "node_id": node_id,
+            "target_version": target_version,
+            "status": "running",
+            "stage": "queued",
+            "percent": 0,
+            "message": "",
+            "log_tail": "",
+            "current_bytes": 0,
+            "total_bytes": 0,
+            "retryable": False,
+            "error_code": "",
+            "xcodebuild_version": "",
+            "app_path": "",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+            "events": [],
+        }
+
+    def update_host_tool_snapshot_event(self, event: "pb.NodeHostToolJobEvent") -> None:
+        """Update a host-tool job snapshot with a progress event."""
+        snapshot = self._host_tool_snapshots.get(event.job_id)
+        if not snapshot:
+            return
+        from . import crypto
+        now = crypto.rfc3339nano(crypto.utc_now())
+        snapshot["stage"] = event.stage
+        snapshot["message"] = event.message
+        snapshot["percent"] = event.percent
+        snapshot["log_tail"] = event.log_tail
+        snapshot["current_bytes"] = event.current_bytes
+        snapshot["total_bytes"] = event.total_bytes
+        snapshot["updated_at"] = now
+        snapshot["events"].append({
+            "seq": event.seq,
+            "stage": event.stage,
+            "message": event.message,
+            "timestamp": now,
+        })
+        if len(snapshot["events"]) > 20:
+            snapshot["events"] = snapshot["events"][-20:]
+
+    def get_host_tool_snapshot(self, job_id: str) -> dict | None:
+        """Retrieve a host-tool job snapshot for polling queries."""
+        return self._host_tool_snapshots.get(job_id)
 
     # ── teardown ──────────────────────────────────────────────────────────
     def close(self) -> None:
@@ -760,6 +893,18 @@ class Connection:
             except asyncio.QueueFull:
                 pass
         self._build_jobs.clear()
+        # Host-tool job (async Xcode) result waiters and event consumers, same
+        # teardown semantics as builds above.
+        for fut in self._host_tool_results.values():
+            if not fut.done():
+                fut.set_exception(ConnectionError(f"node {self.node_id} disconnected"))
+        self._host_tool_results.clear()
+        for ch in self._host_tool_jobs.values():
+            try:
+                ch.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        self._host_tool_jobs.clear()
 
     @property
     def closed(self) -> bool:
