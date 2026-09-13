@@ -2147,6 +2147,7 @@ class NodeService:
     IOS_RELEASE_ACK_TIMEOUT = 10.0  # tear down goroutine + optional credential delete
     IOS_CONFIGURE_ACK_TIMEOUT = 10.0  # revision check + config merge
     IOS_WDA_JOB_ACK_TIMEOUT = 5.0  # job accepted (not completed; job sends result separately)
+    IOS_RUNNER_CONTROL_ACK_TIMEOUT = 30.0  # start/stop/restart the persistent runner loop
 
     async def _require_online_ios_host(self, node_id: str) -> Connection:
         """Guard: node must be online, role=ios_host, and carry ios_mgmt=true."""
@@ -2483,6 +2484,68 @@ class NodeService:
         if not snapshot:
             raise RPCError(Code.NOT_FOUND, f"job {job_id} not found or already expired")
         return snapshot
+
+    async def ios_runner_control(
+        self, node_id: str, device_id: str, udid: str, action: str
+    ) -> dict:
+        """Start/stop/restart the long-lived device-control runner loop on a
+        claimed device, without re-claiming or touching credentials.
+
+        action ∈ {"start","stop","restart"}. Distinct from ios_start_wda_job
+        (which only installs and smoke-tests then tears down): this drives the
+        persistent DeviceManager device loop so the console can bring a runner
+        up/down on demand. STOP never releases the claim.
+
+        The node acks once the loop state transition completes (or is a no-op);
+        inventory reflects the new device_control_online state on the next
+        report.
+        """
+        conn = await self._require_online_ios_host(node_id)
+        udid = (udid or "").strip()
+        action = (action or "").strip().lower()
+        action_enum = {
+            "start": pb.IosRunnerControlAction.IOS_RUNNER_CONTROL_ACTION_START,
+            "stop": pb.IosRunnerControlAction.IOS_RUNNER_CONTROL_ACTION_STOP,
+            "restart": pb.IosRunnerControlAction.IOS_RUNNER_CONTROL_ACTION_RESTART,
+        }.get(action)
+        if action_enum is None:
+            raise RPCError(
+                Code.INVALID_ARGUMENT,
+                f"ios_runner_control: action must be start|stop|restart, got {action!r}",
+            )
+        if not udid:
+            raise RPCError(Code.INVALID_ARGUMENT, "udid is required")
+
+        frame_id = str(uuid.uuid4())
+        ack_future = conn.await_ack(frame_id)
+        frame = pb.NodeDownstreamFrame(
+            server_frame_id=frame_id,
+            created_at=crypto.rfc3339nano(crypto.utc_now()),
+        )
+        frame.ios_runner_control.CopyFrom(
+            pb.NodeIosRunnerControl(
+                request_id=frame_id,
+                device_id=(device_id or "").strip(),
+                udid=udid,
+                action=action_enum,
+            )
+        )
+        try:
+            conn.send(frame)
+            ack = await asyncio.wait_for(ack_future, timeout=self.IOS_RUNNER_CONTROL_ACK_TIMEOUT)
+        except asyncio.TimeoutError:
+            conn.cancel_ack(frame_id)
+            raise RPCError(
+                Code.DEADLINE_EXCEEDED,
+                f"ios_runner_control {action} on {node_id} for {udid} timed out",
+            ) from None
+        except Exception as exc:  # noqa: BLE001
+            conn.cancel_ack(frame_id)
+            raise RPCError(Code.UNAVAILABLE, f"ios_runner_control on {node_id} failed: {exc}") from exc
+        if ack is None or not ack.ok:
+            message = (getattr(ack, "error_message", "") or "").strip() or "node rejected runner control"
+            raise RPCError(Code.INTERNAL, f"ios_runner_control {action} on {node_id} for {udid} failed: {message}")
+        return {"node_id": node_id, "udid": udid, "action": action}
 
     # ── generic node builds (project-page「构建」tab; mirrors the WDA job trio) ──
 

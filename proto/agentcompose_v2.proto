@@ -1630,7 +1630,39 @@ message NodeDownstreamFrame {
     // Acked with NodeCommandAck; on success refreshed_capabilities carries the
     // freshly probed snapshot. Handled by the common node client (all roles).
     NodeRefreshLabelsRequest refresh_labels = 55;
+    // ─── iOS runner control ─────────────────────────────────────────────────
+    // Server -> node: start/stop/restart the long-lived device-control runner
+    // loop on a claimed device without re-claiming or touching credentials.
+    // Distinct from ios_wda_job (which only installs and smoke-tests, then
+    // tears down): this drives the persistent DeviceManager device loop so the
+    // console can bring a runner up/down on demand. Acked with NodeCommandAck.
+    NodeIosRunnerControl ios_runner_control = 56;
   }
+}
+
+// IosRunnerControlAction selects what a NodeIosRunnerControl frame does to the
+// device's long-lived runner loop.
+enum IosRunnerControlAction {
+  IOS_RUNNER_CONTROL_ACTION_UNSPECIFIED = 0;
+  // Start (or re-start) the runner loop. Credential must already exist
+  // (the device was claimed). Idempotent: a running device stays running.
+  IOS_RUNNER_CONTROL_ACTION_START = 1;
+  // Stop the runner loop only — claim, device_id, credential and cached WDA
+  // state are preserved so START picks back up without re-claiming.
+  IOS_RUNNER_CONTROL_ACTION_STOP = 2;
+  // Stop then Start. Use when the runner is wedged but the credential is fine.
+  IOS_RUNNER_CONTROL_ACTION_RESTART = 3;
+}
+
+// Server -> node: control the persistent device-control runner loop on one
+// claimed device. The node applies START/STOP/RESTART against its DeviceManager
+// loop; device_control_online in the inventory report reflects the resulting
+// connection state. STOP never releases the claim.
+message NodeIosRunnerControl {
+  string request_id = 1;
+  string device_id = 2;
+  string udid = 3;
+  IosRunnerControlAction action = 4;
 }
 
 // Server -> node: payload of the refresh_labels frame. Deliberately empty —

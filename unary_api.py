@@ -198,7 +198,7 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
             # the node stream, but no standalone unary request messages. Keep
             # their Connect JSON shape explicit until the proto service surface
             # is regenerated with dedicated request/response messages.
-            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild", "StartHostToolJob", "GetHostToolJobStatus", "CancelHostToolJob", "RefreshNodeLabels"}:
+            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "IosRunnerControl", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild", "StartHostToolJob", "GetHostToolJobStatus", "CancelHostToolJob", "RefreshNodeLabels"}:
                 import json
 
                 payload = json.loads((body or b"{}").decode("utf-8") or "{}")
@@ -341,6 +341,13 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                     data = await service.get_ios_wda_job_status(
                         payload.get("nodeId", ""),
                         payload.get("jobId", ""),
+                    )
+                elif method == "IosRunnerControl":
+                    data = await service.ios_runner_control(
+                        payload.get("nodeId", ""),
+                        payload.get("deviceId", ""),
+                        payload.get("udid", ""),
+                        payload.get("action", ""),
                     )
                 elif method == "StartNodeBuild":
                     data = await service.start_node_build(
