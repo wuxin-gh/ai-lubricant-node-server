@@ -49,11 +49,20 @@ def update_env_vars(mapping: Mapping[str, str], path: Path = ENV_FILE) -> None:
                 output.append("")
             output.append(f"{key}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(output) + "\n"
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("\n".join(output) + "\n")
-        os.replace(temp_name, path)
+            handle.write(body)
+        try:
+            os.replace(temp_name, path)
+        except OSError:
+            # 单文件 bind mount（docker: ./.env:/app/.env）上 rename 到挂载点
+            # 报 EBUSY（[Errno 16]），而挂载文件本身可写——退回原地截断重写。
+            # node-server 首启自动生成 token/master key 写回宿主 .env 依赖这里。
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(body)
+            os.unlink(temp_name)
     except Exception:
         try:
             os.unlink(temp_name)
