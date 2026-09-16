@@ -229,16 +229,16 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
     except Exception as exc:  # noqa: BLE001
         logger.debug("[nodeserver] reattach host terminals for {} failed: {}", record.id, exc)
 
-    # iOS host nodes: request a fresh device inventory snapshot so the management
+    # iOS hosts: request a fresh device inventory snapshot so the management
     # console's device list reflects the current attach/detach state immediately.
-    from .store import NODE_ROLE_IOS_HOST
-    if record.role == NODE_ROLE_IOS_HOST:
-        caps_dict = record.capabilities or {}
-        if caps_dict.get("ios_mgmt") == "true":
-            try:
-                await service.ios_discover(record.id)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("[nodeserver] auto-discover iOS devices for {} failed: {}", record.id, exc)
+    # Gated on the capability label, not the role — an execution node with an
+    # iPhone attached advertises the same label and gets the same treatment.
+    caps_dict = record.capabilities or {}
+    if caps_dict.get("ios_mgmt") == "true":
+        try:
+            await service.ios_discover(record.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[nodeserver] auto-discover iOS devices for {} failed: {}", record.id, exc)
 
     # 4. Downstream pump + upstream loop until either ends.
     stop = asyncio.Event()

@@ -73,6 +73,9 @@ def build_service() -> NodeService:
         _service = NodeService(
             master_key=_master_key(),
             server_url=settings.node_server_public_url,
+            # 数据服务 origin：iOS claim 的配对端点挂在数据服务的 /mcp 下，与控制面
+            # 不同端口。与 hello 帧通告的 gateway_origin 同源，避免两处漂移。
+            gateway_origin=settings.gateway_public_url,
             store=node_store,
             registry=Registry(),
             agent_image=settings.agent_compose_agent_image,

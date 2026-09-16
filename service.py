@@ -457,8 +457,16 @@ class NodeService:
         store: NodeStore,
         registry: Registry,
         agent_image: str = "",
+        gateway_origin: str = "",
     ) -> None:
         self.server_url = (server_url or "").strip().rstrip("/")
+        # 数据服务（MCP 网关）origin：控制面与数据服务同机不同端口（控制面 8003、
+        # 数据服务 8001），凡是要给节点一个「回连数据服务」的地址都必须用它，不能
+        # 用 server_url。iOS claim 就是这种：配对端点在数据服务的 /mcp/device-control
+        # 下，用控制面地址会 404（「未能在该地址找到设备控制服务端」）。
+        # 与 hello 帧通告的 gateway_origin 同源（node_server.config.settings.
+        # gateway_public_url），空值时回退 server_url（老行为，同机同端口的部署）。
+        self.gateway_origin = (gateway_origin or "").strip().rstrip("/") or self.server_url
         self.agent_image = (agent_image or "").strip()
         self.store = store
         self.registry = registry
@@ -2150,15 +2158,20 @@ class NodeService:
     IOS_RUNNER_CONTROL_ACK_TIMEOUT = 30.0  # start/stop/restart the persistent runner loop
 
     async def _require_online_ios_host(self, node_id: str) -> Connection:
-        """Guard: node must be online, role=ios_host, and carry ios_mgmt=true."""
+        """Guard: node must be online and carry ios_mgmt=true.
+
+        Gated on the *capability*, not the role: iOS device management is a
+        host capability (go-ios + usbmuxd), so any node that advertises it can
+        serve these frames — notably an execution node on a Mac/Windows box
+        with an iPhone attached. The separate ``node-ios`` binary still
+        advertises it via ``role=ios_host``; both shapes pass here.
+        """
         node_id = (node_id or "").strip()
         if not node_id:
             raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
         record = await self.store.get_node_if_exists(node_id)
         if record is None:
             raise RPCError(Code.NOT_FOUND, f"node {node_id} not found")
-        if record.role != NODE_ROLE_IOS_HOST:
-            raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is not an iOS host node")
         conn = self.registry.lookup(node_id)
         if conn is None:
             raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
@@ -2166,7 +2179,8 @@ class NodeService:
         if caps.get("ios_mgmt") != "true":
             raise RPCError(
                 Code.FAILED_PRECONDITION,
-                f"node {node_id} does not support iOS management (upgrade node-ios to the latest version)",
+                f"node {node_id} does not support iOS management "
+                "(upgrade the node program, or start it with --ios auto where usbmuxd is available)",
             )
         return conn
 
@@ -2217,7 +2231,10 @@ class NodeService:
                 udid=udid,
                 device_label=(device_label or "").strip(),
                 pairing_code=pairing_code,
-                server_url=self.server_url,
+                # 配对端点在**数据服务**的 /mcp/device-control 下，不是控制面：
+                # 必须用 gateway_origin。用 server_url（控制面 8003）会让节点拨到
+                # 没有该路由的端口，报 404「未能在该地址找到设备控制服务端」。
+                server_url=self.gateway_origin,
                 # transport/wda_bundle_id/xctest_config_name/config_revision are
                 # set at configure time; claim only bootstraps the credential.
             )

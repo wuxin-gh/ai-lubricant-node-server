@@ -101,17 +101,51 @@ class FakeNodeChannel:
         return kind, msg
 
 
-async def _onboard_approved_ios_host(service: NodeService, *, ios_mgmt: bool = True):
-    """Onboard + approve an ios_host node, return (node_id, secret_b32, ios_mgmt)."""
+async def _onboard_approved_ios_host(
+    service: NodeService,
+    *,
+    ios_mgmt: bool = True,
+    role: int = pb.NodeRole.NODE_ROLE_IOS_HOST,
+):
+    """Onboard + approve an iOS-capable node, return (node_id, secret_b32, ios_mgmt).
+
+    ``role`` defaults to the dedicated node-ios host; pass NODE_ROLE_EXECUTION to
+    model an ordinary execution node on a Mac/Windows box with an iPhone attached
+    — the case that must work now that the gate is capability-based.
+
+    An execution node still has to clear the execution approve gate (Node.js/npm/
+    runtime/editor) and needs an owning manager, so seed both: the gate runs at
+    approve time, before the register frame replaces the stored capabilities.
+    """
+    labels: dict[str, str] = {}
+    manager_id = ""
+    if role == pb.NodeRole.NODE_ROLE_EXECUTION:
+        mgr = await service.onboard_node(
+            pb.OnboardNodeRequest(role=pb.NodeRole.NODE_ROLE_PASSIVE_MANAGEMENT, node_name="mgr-e2e")
+        )
+        manager_id = mgr.node_id
+        labels = {
+            "node_version": "v20.0.0",
+            "npm_version": "10.0.0",
+            "runtime_version": "1.0.0",
+            "providers": "claude",
+        }
     resp = await service.onboard_node(
-        pb.OnboardNodeRequest(role=pb.NodeRole.NODE_ROLE_IOS_HOST, node_name="ios-host-e2e")
+        pb.OnboardNodeRequest(
+            role=role, node_name="ios-host-e2e", labels=labels, manager_node_id=manager_id
+        )
     )
     await service.approve_node(pb.ApproveNodeRequest(node_id=resp.node_id))
     return resp.node_id, resp.secret, ios_mgmt
 
 
 async def _register_ios_host(
-    ch: FakeNodeChannel, service: NodeService, node_id: str, secret_b32: str, *, ios_mgmt: bool = True
+    ch: FakeNodeChannel,
+    service: NodeService,
+    node_id: str,
+    secret_b32: str,
+    *,
+    ios_mgmt: bool = True,
 ):
     """Complete the handshake: ServerHello → register with TOTP + capabilities → registered ack."""
     kind, hello = await ch.next_downstream()
@@ -123,7 +157,7 @@ async def _register_ios_host(
     reg = pb.NodeUpstreamFrame()
     caps = pb.NodeCapabilities(os="darwin", arch="arm64")
     if ios_mgmt:
-        # 真实 node-ios 把能力标签放在 caps.labels（ios/main.go Options.Labels →
+        # 真实节点把能力标签放在 caps.labels（Options.Labels →
         # client.go capabilityLabels → Capabilities.Labels），proto 的
         # NodeCapabilities 没有 ios_mgmt 专属字段。
         caps.labels["ios_mgmt"] = "true"
@@ -143,6 +177,42 @@ async def _register_ios_host(
             break
         await asyncio.sleep(0.01)
     assert service.registry.lookup(node_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_execution_node_with_ios_mgmt_is_drivable(db, service):
+    """回归：iOS 管理门禁按 *能力* 而非角色——执行节点报 ios_mgmt 即可被派发。
+
+    这是本次改动的核心断言。此前 ``_require_online_ios_host`` 写死
+    ``role != ios_host`` 就拒，导致插着 iPhone 的普通执行节点「可见但不可驱动」，
+    用户点扫描永远拿不到设备。
+    """
+    node_id, secret_b32, _ = await _onboard_approved_ios_host(
+        service, ios_mgmt=True, role=pb.NodeRole.NODE_ROLE_EXECUTION
+    )
+    ch = FakeNodeChannel()
+    scope = {"type": "http", "method": "POST", "path": "/x"}
+    handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
+
+    await _register_ios_host(ch, service, node_id, secret_b32, ios_mgmt=True)
+    # Execution nodes receive a node_proxy_config frame post-register (ios_host
+    # does not); auto-discover follows it. Drain until we see the discover frame
+    # rather than assuming a fixed position.
+    discover = None
+    for _ in range(5):
+        kind, frame = await ch.next_downstream()
+        assert kind == "frame"
+        if frame.WhichOneof("frame") == "ios_discover":
+            discover = frame
+            break
+    assert discover is not None, "auto-discover did not fire for an execution node with ios_mgmt"
+
+    # And the dispatch path itself must accept it.
+    result = await service.ios_discover(node_id)
+    assert result["node_id"] == node_id
+
+    ch.disconnect()
+    await asyncio.wait_for(handler, timeout=2.0)
 
 
 @pytest.mark.asyncio
@@ -352,9 +422,15 @@ async def test_ios_configure_device_dispatch_and_ack(db, service):
 
 @pytest.mark.asyncio
 async def test_ios_mgmt_capability_gating(db, service):
-    """A node without ios_mgmt=true is rejected with failed_precondition."""
-    # Onboard an ios_host but register WITHOUT the capability label
-    node_id, secret_b32, _ = await _onboard_approved_ios_host(service, ios_mgmt=False)
+    """A node without ios_mgmt=true is rejected with failed_precondition.
+
+    角色无关：这里用**执行节点**（而非 ios_host）证明拦截来自缺失的能力标签，
+    不是角色不符。
+    """
+    # Onboard an execution node but register WITHOUT the capability label
+    node_id, secret_b32, _ = await _onboard_approved_ios_host(
+        service, ios_mgmt=False, role=pb.NodeRole.NODE_ROLE_EXECUTION
+    )
     ch = FakeNodeChannel()
     scope = {"type": "http", "method": "POST", "path": "/x"}
     handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
