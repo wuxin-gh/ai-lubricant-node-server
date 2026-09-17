@@ -73,14 +73,41 @@ MAX_UPLOAD_TOTAL_BYTES = 10 * 1024 * 1024
 # session dispatch, so it gets its own ceiling.
 EDITOR_ACK_TIMEOUT = 600.0  # seconds
 
+# Operations where the node DOWNLOADS a release archive (~30MB), verifies its
+# sha256, extracts and activates it, and only then acks: RuntimeUpgrade and
+# InstallHostTool. The node's own download budget is 10 minutes
+# (agent.downloadTo), and verify+extract+activate adds more on top; the ack
+# window must sit strictly above that, or a slow link fails the operation with a
+# bogus "timed out" while the node is still working. Do NOT reuse
+# SELF_UPGRADE_ACK_TIMEOUT here — self-upgrade acks before downloading.
+ARCHIVE_INSTALL_ACK_TIMEOUT = 900.0  # seconds
+
 # How long ManageNodeEnvironment (create/remove a shared env dir) waits for the
 # node's ack. mkdir/remove are cheap, but a slow filesystem on a loaded node can
 # lag, so allow the same headroom as a config ack.
 ENVIRONMENT_ACK_TIMEOUT = 30.0  # seconds
 # Self-upgrade only waits for the node to ACCEPT (start download+restart); the
 # real confirmation is the reconnect reporting the new version, so a short wait
-# is enough — the node acks immediately then restarts asynchronously.
+# is enough — the node acks immediately then restarts asynchronously. This is
+# only valid because the node's handler calls SendAck BEFORE spawning the
+# download goroutine (nodes/execution/handler.go); anything that acks after a
+# download needs ARCHIVE_INSTALL_ACK_TIMEOUT instead.
 SELF_UPGRADE_ACK_TIMEOUT = 60.0  # seconds
+
+# HostExec runs an arbitrary shell command on the node. The node's own budget is
+# the request's ``timeout_ms`` (default 2 min, hard cap 10 min), so the ack
+# window is derived from that rather than from DISPATCH_ACK_TIMEOUT — otherwise
+# a legitimate multi-minute command (``du``/``find`` over a large tree, a slow
+# package query) is abandoned at 30s while the node keeps running it.
+HOST_EXEC_DEFAULT_TIMEOUT_MS = 2 * 60 * 1000
+HOST_EXEC_MAX_TIMEOUT_MS = 10 * 60 * 1000
+# Slack on top of the node's own budget for the frame round trip + result send.
+HOST_EXEC_ACK_SLACK = 30.0  # seconds
+
+# Worst case for the unified UpgradeNode RPC: it drives RuntimeUpgrade then
+# SelfUpgrade SEQUENTIALLY inside one request, so the caller's budget is the SUM
+# of both windows, not the larger one. Callers must sit strictly above this.
+UPGRADE_TOTAL_ACK_BUDGET = ARCHIVE_INSTALL_ACK_TIMEOUT + SELF_UPGRADE_ACK_TIMEOUT
 
 # Editor CLIs this system can install/upgrade and report versions for. Must stay
 # in sync with agent.SupportedEditors on the Go node side.
@@ -1777,15 +1804,16 @@ class NodeService:
         except Exception as exc:  # noqa: BLE001
             conn.cancel_ack(frame_id)
             raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
-        # A Node.js archive is ~30MB + extract + probe: minutes on slow links,
-        # same ceiling as an editor install.
+        # A Node.js archive is ~30MB + extract + probe, and the node acks only
+        # after all of it (same shape as RuntimeUpgrade): cover a slow download.
         try:
-            ack = await asyncio.wait_for(ack_future, timeout=EDITOR_ACK_TIMEOUT)
+            ack = await asyncio.wait_for(ack_future, timeout=ARCHIVE_INSTALL_ACK_TIMEOUT)
         except TimeoutError as exc:
             conn.cancel_ack(frame_id)
             raise RPCError(
                 Code.DEADLINE_EXCEEDED,
-                "host tool install ack timed out; the download may still be running",
+                f"host tool install ack timed out after {int(ARCHIVE_INSTALL_ACK_TIMEOUT)}s; "
+                "the download may still be running",
             ) from exc
         if not ack.ok:
             raise RPCError(Code.INTERNAL, ack.error or "host tool install failed")
@@ -2396,7 +2424,13 @@ class NodeService:
                     "claimed": dev.claimed,
                     "device_id": dev.device_id,
                     "device_control_online": dev.device_control_online,
+                    # wda_state / wda_progress / wda_stage are the durable
+                    # source of "initializing N%" — the device carries them on
+                    # every report, so a server restart no longer drops them
+                    # (the volatile job snapshot does).
                     "wda_state": dev.wda_state,
+                    "wda_progress": dev.wda_progress,
+                    "wda_stage": dev.wda_stage,
                     "wda_bundle_id": dev.wda_bundle_id,
                     "profile_expires_at": dev.profile_expires_at,
                     "last_error": dev.last_error,
@@ -2879,10 +2913,18 @@ class NodeService:
             conn.cancel_ack(frame_id)
             raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
         try:
-            ack = await asyncio.wait_for(ack_future, timeout=SELF_UPGRADE_ACK_TIMEOUT)
+            # Runtime replacement is hot (no Go restart) but the node acks only
+            # AFTER downloading + verifying + extracting + activating the
+            # archive, so this window must cover a slow download — not the
+            # 60s "accepted" window self-upgrade uses.
+            ack = await asyncio.wait_for(ack_future, timeout=ARCHIVE_INSTALL_ACK_TIMEOUT)
         except TimeoutError as exc:
             conn.cancel_ack(frame_id)
-            raise RPCError(Code.DEADLINE_EXCEEDED, "runtime upgrade ack timed out") from exc
+            raise RPCError(
+                Code.DEADLINE_EXCEEDED,
+                f"runtime upgrade ack timed out after {int(ARCHIVE_INSTALL_ACK_TIMEOUT)}s; "
+                "the node may still be downloading the archive",
+            ) from exc
         if not ack.ok:
             raise RPCError(Code.INTERNAL, ack.error or "runtime upgrade failed")
         await self._store_runtime_version(node_id, target_version)
@@ -3274,7 +3316,15 @@ class NodeService:
             conn.cancel_host_exec(request_id)
             raise RPCError(Code.UNAVAILABLE, f"dispatch host command to node {node_id}: {exc}")
         try:
-            return await asyncio.wait_for(result_future, timeout=DISPATCH_ACK_TIMEOUT)
+            # The node runs the command under the request's own timeout_ms
+            # (default 2 min, hard cap 10 min), so the wait must cover that
+            # rather than the 30s dispatch window — a legitimate multi-minute
+            # command must not be abandoned while the node is still running it.
+            requested_ms = max(int(req.timeout_ms or 0), 0) or HOST_EXEC_DEFAULT_TIMEOUT_MS
+            requested_ms = min(requested_ms, HOST_EXEC_MAX_TIMEOUT_MS)
+            return await asyncio.wait_for(
+                result_future, timeout=requested_ms / 1000.0 + HOST_EXEC_ACK_SLACK
+            )
         except asyncio.TimeoutError:
             conn.cancel_host_exec(request_id)
             raise RPCError(Code.DEADLINE_EXCEEDED, f"node {node_id} did not return host command in time")

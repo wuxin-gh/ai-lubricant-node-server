@@ -146,6 +146,13 @@ class NodeStartupMethod(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     NODE_STARTUP_METHOD_DOCKER: _ClassVar[NodeStartupMethod]
     NODE_STARTUP_METHOD_DOCKER_COMPOSE: _ClassVar[NodeStartupMethod]
 
+class IosRunnerControlAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    IOS_RUNNER_CONTROL_ACTION_UNSPECIFIED: _ClassVar[IosRunnerControlAction]
+    IOS_RUNNER_CONTROL_ACTION_START: _ClassVar[IosRunnerControlAction]
+    IOS_RUNNER_CONTROL_ACTION_STOP: _ClassVar[IosRunnerControlAction]
+    IOS_RUNNER_CONTROL_ACTION_RESTART: _ClassVar[IosRunnerControlAction]
+
 class EnvironmentAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     ENVIRONMENT_ACTION_UNSPECIFIED: _ClassVar[EnvironmentAction]
@@ -310,6 +317,10 @@ NODE_STARTUP_METHOD_STANDALONE: NodeStartupMethod
 NODE_STARTUP_METHOD_SYSTEMD: NodeStartupMethod
 NODE_STARTUP_METHOD_DOCKER: NodeStartupMethod
 NODE_STARTUP_METHOD_DOCKER_COMPOSE: NodeStartupMethod
+IOS_RUNNER_CONTROL_ACTION_UNSPECIFIED: IosRunnerControlAction
+IOS_RUNNER_CONTROL_ACTION_START: IosRunnerControlAction
+IOS_RUNNER_CONTROL_ACTION_STOP: IosRunnerControlAction
+IOS_RUNNER_CONTROL_ACTION_RESTART: IosRunnerControlAction
 ENVIRONMENT_ACTION_UNSPECIFIED: EnvironmentAction
 ENVIRONMENT_ACTION_CREATE: EnvironmentAction
 ENVIRONMENT_ACTION_REMOVE: EnvironmentAction
@@ -2157,7 +2168,7 @@ class NodeUpstreamFrame(_message.Message):
     def __init__(self, client_frame_id: _Optional[str] = ..., register: _Optional[_Union[NodeRegister, _Mapping]] = ..., heartbeat: _Optional[_Union[NodeHeartbeat, _Mapping]] = ..., session_output: _Optional[_Union[NodeSessionOutput, _Mapping]] = ..., session_result: _Optional[_Union[NodeSessionResult, _Mapping]] = ..., command_ack: _Optional[_Union[NodeCommandAck, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_response: _Optional[_Union[NodeTunnelResponse, _Mapping]] = ..., session_event: _Optional[_Union[NodeSessionEventStructured, _Mapping]] = ..., terminal_output: _Optional[_Union[NodeTerminalOutput, _Mapping]] = ..., terminal_exit: _Optional[_Union[NodeTerminalExit, _Mapping]] = ..., host_exec_result: _Optional[_Union[NodeHostExecResult, _Mapping]] = ..., file_upload_result: _Optional[_Union[NodeFileUploadResult, _Mapping]] = ..., terminal_list_result: _Optional[_Union[NodeTerminalListResult, _Mapping]] = ..., tool_run_event: _Optional[_Union[NodeToolRunEvent, _Mapping]] = ..., session_stage: _Optional[_Union[NodeSessionStage, _Mapping]] = ..., ios_devices_report: _Optional[_Union[NodeIosDevicesReport, _Mapping]] = ..., ios_job_event: _Optional[_Union[NodeIosJobEvent, _Mapping]] = ..., ios_job_result: _Optional[_Union[NodeIosJobResult, _Mapping]] = ..., node_build_event: _Optional[_Union[NodeBuildEvent, _Mapping]] = ..., node_build_result: _Optional[_Union[NodeBuildResult, _Mapping]] = ..., host_tool_job_event: _Optional[_Union[NodeHostToolJobEvent, _Mapping]] = ..., host_tool_job_result: _Optional[_Union[NodeHostToolJobResult, _Mapping]] = ...) -> None: ...
 
 class NodeDownstreamFrame(_message.Message):
-    __slots__ = ("server_frame_id", "created_at", "registered", "create_session", "delete_session", "list_sessions", "error", "tunnel_request", "session_input", "create_execution_node", "delete_execution_node", "server_hello", "configure_session_llm", "apply_session_mcps", "apply_session_skills", "apply_session_plugins", "start_session_runtime", "restart_session_runtime", "configure_session_mode", "collect_session_artifacts", "proxy_request", "manage_editor", "self_upgrade", "runtime_upgrade", "terminal_open", "terminal_input", "terminal_resize", "terminal_close", "terminal_attach", "terminal_list", "terminal_interrupt", "host_exec", "file_upload", "public_ip_lookup_config", "node_proxy_config", "tool_run_request", "tool_run_stop", "manage_environment", "sync_environment", "inspect_environment", "ios_discover", "ios_claim_device", "ios_release_device", "ios_configure_device", "ios_wda_job", "ios_job_cancel", "inspect_system_env", "sync_system_env", "archive_system_env_resource", "node_build", "node_build_cancel", "install_host_tool", "host_tool_job", "host_tool_job_cancel", "refresh_labels")
+    __slots__ = ("server_frame_id", "created_at", "registered", "create_session", "delete_session", "list_sessions", "error", "tunnel_request", "session_input", "create_execution_node", "delete_execution_node", "server_hello", "configure_session_llm", "apply_session_mcps", "apply_session_skills", "apply_session_plugins", "start_session_runtime", "restart_session_runtime", "configure_session_mode", "collect_session_artifacts", "proxy_request", "manage_editor", "self_upgrade", "runtime_upgrade", "terminal_open", "terminal_input", "terminal_resize", "terminal_close", "terminal_attach", "terminal_list", "terminal_interrupt", "host_exec", "file_upload", "public_ip_lookup_config", "node_proxy_config", "tool_run_request", "tool_run_stop", "manage_environment", "sync_environment", "inspect_environment", "ios_discover", "ios_claim_device", "ios_release_device", "ios_configure_device", "ios_wda_job", "ios_job_cancel", "inspect_system_env", "sync_system_env", "archive_system_env_resource", "node_build", "node_build_cancel", "install_host_tool", "host_tool_job", "host_tool_job_cancel", "refresh_labels", "ios_runner_control")
     SERVER_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     REGISTERED_FIELD_NUMBER: _ClassVar[int]
@@ -2213,6 +2224,7 @@ class NodeDownstreamFrame(_message.Message):
     HOST_TOOL_JOB_FIELD_NUMBER: _ClassVar[int]
     HOST_TOOL_JOB_CANCEL_FIELD_NUMBER: _ClassVar[int]
     REFRESH_LABELS_FIELD_NUMBER: _ClassVar[int]
+    IOS_RUNNER_CONTROL_FIELD_NUMBER: _ClassVar[int]
     server_frame_id: str
     created_at: str
     registered: NodeRegistered
@@ -2268,7 +2280,20 @@ class NodeDownstreamFrame(_message.Message):
     host_tool_job: NodeHostToolJob
     host_tool_job_cancel: NodeHostToolJobCancel
     refresh_labels: NodeRefreshLabelsRequest
-    def __init__(self, server_frame_id: _Optional[str] = ..., created_at: _Optional[str] = ..., registered: _Optional[_Union[NodeRegistered, _Mapping]] = ..., create_session: _Optional[_Union[NodeCreateSession, _Mapping]] = ..., delete_session: _Optional[_Union[NodeDeleteSession, _Mapping]] = ..., list_sessions: _Optional[_Union[NodeListSessions, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_request: _Optional[_Union[NodeTunnelRequest, _Mapping]] = ..., session_input: _Optional[_Union[NodeSessionInput, _Mapping]] = ..., create_execution_node: _Optional[_Union[NodeCreateExecutionNode, _Mapping]] = ..., delete_execution_node: _Optional[_Union[NodeDeleteExecutionNode, _Mapping]] = ..., server_hello: _Optional[_Union[NodeServerHello, _Mapping]] = ..., configure_session_llm: _Optional[_Union[ConfigureSessionLLM, _Mapping]] = ..., apply_session_mcps: _Optional[_Union[ApplySessionMCPs, _Mapping]] = ..., apply_session_skills: _Optional[_Union[ApplySessionSkills, _Mapping]] = ..., apply_session_plugins: _Optional[_Union[ApplySessionPlugins, _Mapping]] = ..., start_session_runtime: _Optional[_Union[StartSessionRuntime, _Mapping]] = ..., restart_session_runtime: _Optional[_Union[RestartSessionRuntime, _Mapping]] = ..., configure_session_mode: _Optional[_Union[ConfigureSessionMode, _Mapping]] = ..., collect_session_artifacts: _Optional[_Union[CollectSessionArtifacts, _Mapping]] = ..., proxy_request: _Optional[_Union[NodeProxyRequest, _Mapping]] = ..., manage_editor: _Optional[_Union[NodeManageEditor, _Mapping]] = ..., self_upgrade: _Optional[_Union[NodeSelfUpgrade, _Mapping]] = ..., runtime_upgrade: _Optional[_Union[NodeRuntimeUpgrade, _Mapping]] = ..., terminal_open: _Optional[_Union[NodeTerminalOpen, _Mapping]] = ..., terminal_input: _Optional[_Union[NodeTerminalInput, _Mapping]] = ..., terminal_resize: _Optional[_Union[NodeTerminalResize, _Mapping]] = ..., terminal_close: _Optional[_Union[NodeTerminalClose, _Mapping]] = ..., terminal_attach: _Optional[_Union[NodeTerminalAttach, _Mapping]] = ..., terminal_list: _Optional[_Union[NodeTerminalListRequest, _Mapping]] = ..., terminal_interrupt: _Optional[_Union[NodeTerminalInterrupt, _Mapping]] = ..., host_exec: _Optional[_Union[NodeHostExecRequest, _Mapping]] = ..., file_upload: _Optional[_Union[NodeFileUploadRequest, _Mapping]] = ..., public_ip_lookup_config: _Optional[_Union[NodePublicIPLookupConfig, _Mapping]] = ..., node_proxy_config: _Optional[_Union[NodeProxyConfig, _Mapping]] = ..., tool_run_request: _Optional[_Union[NodeToolRunRequest, _Mapping]] = ..., tool_run_stop: _Optional[_Union[NodeToolRunStop, _Mapping]] = ..., manage_environment: _Optional[_Union[NodeManageEnvironment, _Mapping]] = ..., sync_environment: _Optional[_Union[NodeSyncEnvironment, _Mapping]] = ..., inspect_environment: _Optional[_Union[NodeInspectEnvironment, _Mapping]] = ..., ios_discover: _Optional[_Union[NodeIosDiscover, _Mapping]] = ..., ios_claim_device: _Optional[_Union[NodeIosClaimDevice, _Mapping]] = ..., ios_release_device: _Optional[_Union[NodeIosReleaseDevice, _Mapping]] = ..., ios_configure_device: _Optional[_Union[NodeIosConfigureDevice, _Mapping]] = ..., ios_wda_job: _Optional[_Union[NodeIosWdaJobRequest, _Mapping]] = ..., ios_job_cancel: _Optional[_Union[NodeIosJobCancel, _Mapping]] = ..., inspect_system_env: _Optional[_Union[NodeInspectSystemEnv, _Mapping]] = ..., sync_system_env: _Optional[_Union[NodeSyncSystemEnv, _Mapping]] = ..., archive_system_env_resource: _Optional[_Union[NodeArchiveSystemEnvResource, _Mapping]] = ..., node_build: _Optional[_Union[NodeBuildRequest, _Mapping]] = ..., node_build_cancel: _Optional[_Union[NodeBuildCancel, _Mapping]] = ..., install_host_tool: _Optional[_Union[NodeInstallHostTool, _Mapping]] = ..., host_tool_job: _Optional[_Union[NodeHostToolJob, _Mapping]] = ..., host_tool_job_cancel: _Optional[_Union[NodeHostToolJobCancel, _Mapping]] = ..., refresh_labels: _Optional[_Union[NodeRefreshLabelsRequest, _Mapping]] = ...) -> None: ...
+    ios_runner_control: NodeIosRunnerControl
+    def __init__(self, server_frame_id: _Optional[str] = ..., created_at: _Optional[str] = ..., registered: _Optional[_Union[NodeRegistered, _Mapping]] = ..., create_session: _Optional[_Union[NodeCreateSession, _Mapping]] = ..., delete_session: _Optional[_Union[NodeDeleteSession, _Mapping]] = ..., list_sessions: _Optional[_Union[NodeListSessions, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_request: _Optional[_Union[NodeTunnelRequest, _Mapping]] = ..., session_input: _Optional[_Union[NodeSessionInput, _Mapping]] = ..., create_execution_node: _Optional[_Union[NodeCreateExecutionNode, _Mapping]] = ..., delete_execution_node: _Optional[_Union[NodeDeleteExecutionNode, _Mapping]] = ..., server_hello: _Optional[_Union[NodeServerHello, _Mapping]] = ..., configure_session_llm: _Optional[_Union[ConfigureSessionLLM, _Mapping]] = ..., apply_session_mcps: _Optional[_Union[ApplySessionMCPs, _Mapping]] = ..., apply_session_skills: _Optional[_Union[ApplySessionSkills, _Mapping]] = ..., apply_session_plugins: _Optional[_Union[ApplySessionPlugins, _Mapping]] = ..., start_session_runtime: _Optional[_Union[StartSessionRuntime, _Mapping]] = ..., restart_session_runtime: _Optional[_Union[RestartSessionRuntime, _Mapping]] = ..., configure_session_mode: _Optional[_Union[ConfigureSessionMode, _Mapping]] = ..., collect_session_artifacts: _Optional[_Union[CollectSessionArtifacts, _Mapping]] = ..., proxy_request: _Optional[_Union[NodeProxyRequest, _Mapping]] = ..., manage_editor: _Optional[_Union[NodeManageEditor, _Mapping]] = ..., self_upgrade: _Optional[_Union[NodeSelfUpgrade, _Mapping]] = ..., runtime_upgrade: _Optional[_Union[NodeRuntimeUpgrade, _Mapping]] = ..., terminal_open: _Optional[_Union[NodeTerminalOpen, _Mapping]] = ..., terminal_input: _Optional[_Union[NodeTerminalInput, _Mapping]] = ..., terminal_resize: _Optional[_Union[NodeTerminalResize, _Mapping]] = ..., terminal_close: _Optional[_Union[NodeTerminalClose, _Mapping]] = ..., terminal_attach: _Optional[_Union[NodeTerminalAttach, _Mapping]] = ..., terminal_list: _Optional[_Union[NodeTerminalListRequest, _Mapping]] = ..., terminal_interrupt: _Optional[_Union[NodeTerminalInterrupt, _Mapping]] = ..., host_exec: _Optional[_Union[NodeHostExecRequest, _Mapping]] = ..., file_upload: _Optional[_Union[NodeFileUploadRequest, _Mapping]] = ..., public_ip_lookup_config: _Optional[_Union[NodePublicIPLookupConfig, _Mapping]] = ..., node_proxy_config: _Optional[_Union[NodeProxyConfig, _Mapping]] = ..., tool_run_request: _Optional[_Union[NodeToolRunRequest, _Mapping]] = ..., tool_run_stop: _Optional[_Union[NodeToolRunStop, _Mapping]] = ..., manage_environment: _Optional[_Union[NodeManageEnvironment, _Mapping]] = ..., sync_environment: _Optional[_Union[NodeSyncEnvironment, _Mapping]] = ..., inspect_environment: _Optional[_Union[NodeInspectEnvironment, _Mapping]] = ..., ios_discover: _Optional[_Union[NodeIosDiscover, _Mapping]] = ..., ios_claim_device: _Optional[_Union[NodeIosClaimDevice, _Mapping]] = ..., ios_release_device: _Optional[_Union[NodeIosReleaseDevice, _Mapping]] = ..., ios_configure_device: _Optional[_Union[NodeIosConfigureDevice, _Mapping]] = ..., ios_wda_job: _Optional[_Union[NodeIosWdaJobRequest, _Mapping]] = ..., ios_job_cancel: _Optional[_Union[NodeIosJobCancel, _Mapping]] = ..., inspect_system_env: _Optional[_Union[NodeInspectSystemEnv, _Mapping]] = ..., sync_system_env: _Optional[_Union[NodeSyncSystemEnv, _Mapping]] = ..., archive_system_env_resource: _Optional[_Union[NodeArchiveSystemEnvResource, _Mapping]] = ..., node_build: _Optional[_Union[NodeBuildRequest, _Mapping]] = ..., node_build_cancel: _Optional[_Union[NodeBuildCancel, _Mapping]] = ..., install_host_tool: _Optional[_Union[NodeInstallHostTool, _Mapping]] = ..., host_tool_job: _Optional[_Union[NodeHostToolJob, _Mapping]] = ..., host_tool_job_cancel: _Optional[_Union[NodeHostToolJobCancel, _Mapping]] = ..., refresh_labels: _Optional[_Union[NodeRefreshLabelsRequest, _Mapping]] = ..., ios_runner_control: _Optional[_Union[NodeIosRunnerControl, _Mapping]] = ...) -> None: ...
+
+class NodeIosRunnerControl(_message.Message):
+    __slots__ = ("request_id", "device_id", "udid", "action")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    DEVICE_ID_FIELD_NUMBER: _ClassVar[int]
+    UDID_FIELD_NUMBER: _ClassVar[int]
+    ACTION_FIELD_NUMBER: _ClassVar[int]
+    request_id: str
+    device_id: str
+    udid: str
+    action: IosRunnerControlAction
+    def __init__(self, request_id: _Optional[str] = ..., device_id: _Optional[str] = ..., udid: _Optional[str] = ..., action: _Optional[_Union[IosRunnerControlAction, str]] = ...) -> None: ...
 
 class NodeRefreshLabelsRequest(_message.Message):
     __slots__ = ()
@@ -3930,7 +3955,7 @@ class NodeIosDiscover(_message.Message):
     def __init__(self, request_id: _Optional[str] = ...) -> None: ...
 
 class NodeIosDevice(_message.Message):
-    __slots__ = ("udid", "name", "model", "product_version", "connection_type", "present", "claimed", "device_id", "device_control_online", "wda_state", "wda_bundle_id", "profile_expires_at", "last_error", "config_revision_applied", "developer_mode_enabled")
+    __slots__ = ("udid", "name", "model", "product_version", "connection_type", "present", "claimed", "device_id", "device_control_online", "wda_state", "wda_bundle_id", "profile_expires_at", "last_error", "config_revision_applied", "developer_mode_enabled", "wda_progress", "wda_stage")
     UDID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     MODEL_FIELD_NUMBER: _ClassVar[int]
@@ -3946,6 +3971,8 @@ class NodeIosDevice(_message.Message):
     LAST_ERROR_FIELD_NUMBER: _ClassVar[int]
     CONFIG_REVISION_APPLIED_FIELD_NUMBER: _ClassVar[int]
     DEVELOPER_MODE_ENABLED_FIELD_NUMBER: _ClassVar[int]
+    WDA_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    WDA_STAGE_FIELD_NUMBER: _ClassVar[int]
     udid: str
     name: str
     model: str
@@ -3961,7 +3988,9 @@ class NodeIosDevice(_message.Message):
     last_error: str
     config_revision_applied: int
     developer_mode_enabled: bool
-    def __init__(self, udid: _Optional[str] = ..., name: _Optional[str] = ..., model: _Optional[str] = ..., product_version: _Optional[str] = ..., connection_type: _Optional[_Union[IosConnectionType, str]] = ..., present: _Optional[bool] = ..., claimed: _Optional[bool] = ..., device_id: _Optional[str] = ..., device_control_online: _Optional[bool] = ..., wda_state: _Optional[_Union[IosWdaState, str]] = ..., wda_bundle_id: _Optional[str] = ..., profile_expires_at: _Optional[str] = ..., last_error: _Optional[str] = ..., config_revision_applied: _Optional[int] = ..., developer_mode_enabled: _Optional[bool] = ...) -> None: ...
+    wda_progress: int
+    wda_stage: str
+    def __init__(self, udid: _Optional[str] = ..., name: _Optional[str] = ..., model: _Optional[str] = ..., product_version: _Optional[str] = ..., connection_type: _Optional[_Union[IosConnectionType, str]] = ..., present: _Optional[bool] = ..., claimed: _Optional[bool] = ..., device_id: _Optional[str] = ..., device_control_online: _Optional[bool] = ..., wda_state: _Optional[_Union[IosWdaState, str]] = ..., wda_bundle_id: _Optional[str] = ..., profile_expires_at: _Optional[str] = ..., last_error: _Optional[str] = ..., config_revision_applied: _Optional[int] = ..., developer_mode_enabled: _Optional[bool] = ..., wda_progress: _Optional[int] = ..., wda_stage: _Optional[str] = ...) -> None: ...
 
 class NodeIosDevicesReport(_message.Message):
     __slots__ = ("request_id", "snapshot_revision", "reported_at", "devices", "enumerate_error")

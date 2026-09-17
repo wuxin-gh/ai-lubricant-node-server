@@ -3249,6 +3249,15 @@ message NodeIosDevice {
   // Whether the device has Developer Mode enabled (iOS 16+). A false value with
   // present=true is the most common reason WDA cannot be launched.
   bool developer_mode_enabled = 15;
+  // Progress (0-100) and stage name of the WDA job currently running against
+  // this device. Only meaningful while wda_state == PREPARING.
+  //
+  // Carried on the DEVICE (not only on the job stream) so the console can show
+  // "initializing 42%" from the durable inventory: job snapshots live in server
+  // memory keyed to one connection and vanish on restart, while the device row
+  // is persisted and re-reported on every reconnect.
+  int32 wda_progress = 16;
+  string wda_stage = 17;
 }
 
 // Node -> server: the host's full device inventory. Always a complete snapshot
