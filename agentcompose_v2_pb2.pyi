@@ -198,6 +198,7 @@ class IosWdaState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     IOS_WDA_STATE_RENEWAL_DUE: _ClassVar[IosWdaState]
     IOS_WDA_STATE_EXPIRED: _ClassVar[IosWdaState]
     IOS_WDA_STATE_FAILED: _ClassVar[IosWdaState]
+    IOS_WDA_STATE_INSTALLED: _ClassVar[IosWdaState]
 
 class IosWdaJobAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -349,6 +350,7 @@ IOS_WDA_STATE_READY: IosWdaState
 IOS_WDA_STATE_RENEWAL_DUE: IosWdaState
 IOS_WDA_STATE_EXPIRED: IosWdaState
 IOS_WDA_STATE_FAILED: IosWdaState
+IOS_WDA_STATE_INSTALLED: IosWdaState
 IOS_WDA_JOB_ACTION_UNSPECIFIED: IosWdaJobAction
 IOS_WDA_JOB_ACTION_PREPARE: IosWdaJobAction
 IOS_WDA_JOB_ACTION_RENEW: IosWdaJobAction
@@ -2118,7 +2120,7 @@ class SkillSpec(_message.Message):
     def __init__(self, name: _Optional[str] = ..., source: _Optional[str] = ..., url: _Optional[str] = ..., path: _Optional[str] = ..., ref: _Optional[str] = ..., username: _Optional[str] = ..., password: _Optional[str] = ..., token: _Optional[str] = ...) -> None: ...
 
 class NodeUpstreamFrame(_message.Message):
-    __slots__ = ("client_frame_id", "register", "heartbeat", "session_output", "session_result", "command_ack", "error", "tunnel_response", "session_event", "terminal_output", "terminal_exit", "host_exec_result", "file_upload_result", "terminal_list_result", "tool_run_event", "session_stage", "ios_devices_report", "ios_job_event", "ios_job_result", "node_build_event", "node_build_result", "host_tool_job_event", "host_tool_job_result")
+    __slots__ = ("client_frame_id", "register", "heartbeat", "session_output", "session_result", "command_ack", "error", "tunnel_response", "session_event", "terminal_output", "terminal_exit", "host_exec_result", "file_upload_result", "terminal_list_result", "tool_run_event", "session_stage", "ios_devices_report", "ios_job_event", "ios_job_result", "node_build_event", "node_build_result", "host_tool_job_event", "host_tool_job_result", "node_upgrade_event")
     CLIENT_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
     REGISTER_FIELD_NUMBER: _ClassVar[int]
     HEARTBEAT_FIELD_NUMBER: _ClassVar[int]
@@ -2142,6 +2144,7 @@ class NodeUpstreamFrame(_message.Message):
     NODE_BUILD_RESULT_FIELD_NUMBER: _ClassVar[int]
     HOST_TOOL_JOB_EVENT_FIELD_NUMBER: _ClassVar[int]
     HOST_TOOL_JOB_RESULT_FIELD_NUMBER: _ClassVar[int]
+    NODE_UPGRADE_EVENT_FIELD_NUMBER: _ClassVar[int]
     client_frame_id: str
     register: NodeRegister
     heartbeat: NodeHeartbeat
@@ -2165,7 +2168,8 @@ class NodeUpstreamFrame(_message.Message):
     node_build_result: NodeBuildResult
     host_tool_job_event: NodeHostToolJobEvent
     host_tool_job_result: NodeHostToolJobResult
-    def __init__(self, client_frame_id: _Optional[str] = ..., register: _Optional[_Union[NodeRegister, _Mapping]] = ..., heartbeat: _Optional[_Union[NodeHeartbeat, _Mapping]] = ..., session_output: _Optional[_Union[NodeSessionOutput, _Mapping]] = ..., session_result: _Optional[_Union[NodeSessionResult, _Mapping]] = ..., command_ack: _Optional[_Union[NodeCommandAck, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_response: _Optional[_Union[NodeTunnelResponse, _Mapping]] = ..., session_event: _Optional[_Union[NodeSessionEventStructured, _Mapping]] = ..., terminal_output: _Optional[_Union[NodeTerminalOutput, _Mapping]] = ..., terminal_exit: _Optional[_Union[NodeTerminalExit, _Mapping]] = ..., host_exec_result: _Optional[_Union[NodeHostExecResult, _Mapping]] = ..., file_upload_result: _Optional[_Union[NodeFileUploadResult, _Mapping]] = ..., terminal_list_result: _Optional[_Union[NodeTerminalListResult, _Mapping]] = ..., tool_run_event: _Optional[_Union[NodeToolRunEvent, _Mapping]] = ..., session_stage: _Optional[_Union[NodeSessionStage, _Mapping]] = ..., ios_devices_report: _Optional[_Union[NodeIosDevicesReport, _Mapping]] = ..., ios_job_event: _Optional[_Union[NodeIosJobEvent, _Mapping]] = ..., ios_job_result: _Optional[_Union[NodeIosJobResult, _Mapping]] = ..., node_build_event: _Optional[_Union[NodeBuildEvent, _Mapping]] = ..., node_build_result: _Optional[_Union[NodeBuildResult, _Mapping]] = ..., host_tool_job_event: _Optional[_Union[NodeHostToolJobEvent, _Mapping]] = ..., host_tool_job_result: _Optional[_Union[NodeHostToolJobResult, _Mapping]] = ...) -> None: ...
+    node_upgrade_event: NodeUpgradeEvent
+    def __init__(self, client_frame_id: _Optional[str] = ..., register: _Optional[_Union[NodeRegister, _Mapping]] = ..., heartbeat: _Optional[_Union[NodeHeartbeat, _Mapping]] = ..., session_output: _Optional[_Union[NodeSessionOutput, _Mapping]] = ..., session_result: _Optional[_Union[NodeSessionResult, _Mapping]] = ..., command_ack: _Optional[_Union[NodeCommandAck, _Mapping]] = ..., error: _Optional[_Union[NodeError, _Mapping]] = ..., tunnel_response: _Optional[_Union[NodeTunnelResponse, _Mapping]] = ..., session_event: _Optional[_Union[NodeSessionEventStructured, _Mapping]] = ..., terminal_output: _Optional[_Union[NodeTerminalOutput, _Mapping]] = ..., terminal_exit: _Optional[_Union[NodeTerminalExit, _Mapping]] = ..., host_exec_result: _Optional[_Union[NodeHostExecResult, _Mapping]] = ..., file_upload_result: _Optional[_Union[NodeFileUploadResult, _Mapping]] = ..., terminal_list_result: _Optional[_Union[NodeTerminalListResult, _Mapping]] = ..., tool_run_event: _Optional[_Union[NodeToolRunEvent, _Mapping]] = ..., session_stage: _Optional[_Union[NodeSessionStage, _Mapping]] = ..., ios_devices_report: _Optional[_Union[NodeIosDevicesReport, _Mapping]] = ..., ios_job_event: _Optional[_Union[NodeIosJobEvent, _Mapping]] = ..., ios_job_result: _Optional[_Union[NodeIosJobResult, _Mapping]] = ..., node_build_event: _Optional[_Union[NodeBuildEvent, _Mapping]] = ..., node_build_result: _Optional[_Union[NodeBuildResult, _Mapping]] = ..., host_tool_job_event: _Optional[_Union[NodeHostToolJobEvent, _Mapping]] = ..., host_tool_job_result: _Optional[_Union[NodeHostToolJobResult, _Mapping]] = ..., node_upgrade_event: _Optional[_Union[NodeUpgradeEvent, _Mapping]] = ...) -> None: ...
 
 class NodeDownstreamFrame(_message.Message):
     __slots__ = ("server_frame_id", "created_at", "registered", "create_session", "delete_session", "list_sessions", "error", "tunnel_request", "session_input", "create_execution_node", "delete_execution_node", "server_hello", "configure_session_llm", "apply_session_mcps", "apply_session_skills", "apply_session_plugins", "start_session_runtime", "restart_session_runtime", "configure_session_mode", "collect_session_artifacts", "proxy_request", "manage_editor", "self_upgrade", "runtime_upgrade", "terminal_open", "terminal_input", "terminal_resize", "terminal_close", "terminal_attach", "terminal_list", "terminal_interrupt", "host_exec", "file_upload", "public_ip_lookup_config", "node_proxy_config", "tool_run_request", "tool_run_stop", "manage_environment", "sync_environment", "inspect_environment", "ios_discover", "ios_claim_device", "ios_release_device", "ios_configure_device", "ios_wda_job", "ios_job_cancel", "inspect_system_env", "sync_system_env", "archive_system_env_resource", "node_build", "node_build_cancel", "install_host_tool", "host_tool_job", "host_tool_job_cancel", "refresh_labels", "ios_runner_control")
@@ -2300,12 +2304,16 @@ class NodeRefreshLabelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class NodeManageEnvironment(_message.Message):
-    __slots__ = ("env_id", "action")
+    __slots__ = ("env_id", "action", "git", "target_path")
     ENV_ID_FIELD_NUMBER: _ClassVar[int]
     ACTION_FIELD_NUMBER: _ClassVar[int]
+    GIT_FIELD_NUMBER: _ClassVar[int]
+    TARGET_PATH_FIELD_NUMBER: _ClassVar[int]
     env_id: str
     action: EnvironmentAction
-    def __init__(self, env_id: _Optional[str] = ..., action: _Optional[_Union[EnvironmentAction, str]] = ...) -> None: ...
+    git: NodeGitSpec
+    target_path: str
+    def __init__(self, env_id: _Optional[str] = ..., action: _Optional[_Union[EnvironmentAction, str]] = ..., git: _Optional[_Union[NodeGitSpec, _Mapping]] = ..., target_path: _Optional[str] = ...) -> None: ...
 
 class NodeSyncEnvironment(_message.Message):
     __slots__ = ("env_id", "skills", "plugins")
@@ -2422,6 +2430,28 @@ class NodeRuntimeUpgrade(_message.Message):
     proxy_url: str
     proxy_url_prefix: str
     def __init__(self, target_version: _Optional[str] = ..., download_url: _Optional[str] = ..., sha256: _Optional[str] = ..., proxy_mode: _Optional[str] = ..., proxy_url: _Optional[str] = ..., proxy_url_prefix: _Optional[str] = ...) -> None: ...
+
+class NodeUpgradeEvent(_message.Message):
+    __slots__ = ("server_frame_id", "kind", "seq", "stage", "message", "percent", "current_bytes", "total_bytes", "reported_at")
+    SERVER_FRAME_ID_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    STAGE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PERCENT_FIELD_NUMBER: _ClassVar[int]
+    CURRENT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BYTES_FIELD_NUMBER: _ClassVar[int]
+    REPORTED_AT_FIELD_NUMBER: _ClassVar[int]
+    server_frame_id: str
+    kind: str
+    seq: int
+    stage: str
+    message: str
+    percent: int
+    current_bytes: int
+    total_bytes: int
+    reported_at: str
+    def __init__(self, server_frame_id: _Optional[str] = ..., kind: _Optional[str] = ..., seq: _Optional[int] = ..., stage: _Optional[str] = ..., message: _Optional[str] = ..., percent: _Optional[int] = ..., current_bytes: _Optional[int] = ..., total_bytes: _Optional[int] = ..., reported_at: _Optional[str] = ...) -> None: ...
 
 class NodeInstallHostTool(_message.Message):
     __slots__ = ("tool", "target_version", "download_url", "sha256", "proxy_mode", "proxy_url", "proxy_url_prefix")
@@ -4183,7 +4213,7 @@ class NodeIosJobResult(_message.Message):
     def __init__(self, job_id: _Optional[str] = ..., ok: _Optional[bool] = ..., error_code: _Optional[str] = ..., error_message: _Optional[str] = ..., retryable: _Optional[bool] = ..., stage_reached: _Optional[_Union[IosJobStage, str]] = ..., wda_bundle_id: _Optional[str] = ..., profile_expires_at: _Optional[str] = ..., artifact_sha256: _Optional[str] = ..., artifact_version: _Optional[str] = ..., certificate_id: _Optional[str] = ..., config_revision: _Optional[int] = ...) -> None: ...
 
 class NodeBuildRequest(_message.Message):
-    __slots__ = ("build_id", "recipe_kind", "source_url", "source_ref", "steps", "artifact_glob", "upload_url", "upload_token", "timeout_seconds", "artifact_name", "artifact_version")
+    __slots__ = ("build_id", "recipe_kind", "source_url", "source_ref", "steps", "artifact_glob", "upload_url", "upload_token", "timeout_seconds", "artifact_name", "artifact_version", "source_kind", "source_subdir", "source_no_proxy")
     BUILD_ID_FIELD_NUMBER: _ClassVar[int]
     RECIPE_KIND_FIELD_NUMBER: _ClassVar[int]
     SOURCE_URL_FIELD_NUMBER: _ClassVar[int]
@@ -4195,6 +4225,9 @@ class NodeBuildRequest(_message.Message):
     TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_NAME_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_KIND_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_SUBDIR_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_NO_PROXY_FIELD_NUMBER: _ClassVar[int]
     build_id: str
     recipe_kind: str
     source_url: str
@@ -4206,7 +4239,10 @@ class NodeBuildRequest(_message.Message):
     timeout_seconds: int
     artifact_name: str
     artifact_version: str
-    def __init__(self, build_id: _Optional[str] = ..., recipe_kind: _Optional[str] = ..., source_url: _Optional[str] = ..., source_ref: _Optional[str] = ..., steps: _Optional[_Iterable[str]] = ..., artifact_glob: _Optional[str] = ..., upload_url: _Optional[str] = ..., upload_token: _Optional[str] = ..., timeout_seconds: _Optional[int] = ..., artifact_name: _Optional[str] = ..., artifact_version: _Optional[str] = ...) -> None: ...
+    source_kind: str
+    source_subdir: str
+    source_no_proxy: bool
+    def __init__(self, build_id: _Optional[str] = ..., recipe_kind: _Optional[str] = ..., source_url: _Optional[str] = ..., source_ref: _Optional[str] = ..., steps: _Optional[_Iterable[str]] = ..., artifact_glob: _Optional[str] = ..., upload_url: _Optional[str] = ..., upload_token: _Optional[str] = ..., timeout_seconds: _Optional[int] = ..., artifact_name: _Optional[str] = ..., artifact_version: _Optional[str] = ..., source_kind: _Optional[str] = ..., source_subdir: _Optional[str] = ..., source_no_proxy: _Optional[bool] = ...) -> None: ...
 
 class NodeBuildCancel(_message.Message):
     __slots__ = ("build_id",)

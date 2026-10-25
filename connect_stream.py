@@ -242,6 +242,9 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
 
     # 4. Downstream pump + upstream loop until either ends.
     stop = asyncio.Event()
+    # The reason the stream ended, so the trailer tells the node WHY (see _end).
+    # None = a genuine clean end (node closed / EOF); an RPCError = we tore it down.
+    close_reason: dict[str, "RPCError | None"] = {"error": None}
 
     async def downstream_pump() -> None:
         try:
@@ -252,6 +255,7 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
                 await _send_body(send, envelope.encode_message(frame))
         except Exception as exc:  # noqa: BLE001
             logger.debug("[nodeserver] downstream pump ended for {}: {}", record.id, exc)
+            close_reason["error"] = RPCError(Code.INTERNAL, f"downstream pump failed: {exc}")
         finally:
             stop.set()
 
@@ -261,9 +265,24 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
                 frame = await reader.next()
                 if frame is None:
                     return
-                await service.handle_upstream(record.id, conn, frame)
+                # A single bad frame must NOT kill the whole NodeConnect stream.
+                # handle_upstream fans out to per-frame handlers (session events,
+                # iOS inventory/job frames, heartbeats); before this guard, one
+                # raising handler (e.g. a transient DB error while recording a
+                # session event) propagated out of the loop, set `stop`, and tore
+                # the whole stream down — the node saw a clean EOF, reconnected,
+                # and the operator saw a spurious "node ... is offline". Isolate
+                # the frame and keep the stream alive.
+                try:
+                    await service.handle_upstream(record.id, conn, frame)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[nodeserver] handle_upstream frame failed for {} (stream kept alive): {}",
+                        record.id, exc,
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.debug("[nodeserver] upstream loop ended for {}: {}", record.id, exc)
+            close_reason["error"] = RPCError(Code.INTERNAL, f"upstream loop failed: {exc}")
         finally:
             stop.set()
 
@@ -277,7 +296,11 @@ async def node_connect_asgi(scope: dict, receive, send, service: NodeService) ->
             if not task.done():
                 task.cancel()
         await asyncio.gather(pump_task, up_task, return_exceptions=True)
-        await _end(send, None)
+        # Surface the real reason. A clean None trailer is indistinguishable from
+        # a deliberate shutdown, so a server-side failure would show up on the
+        # node as a bare "EOF" (errSpecialEnvelope) with no cause. Pass the
+        # captured error so the node logs the actual code + message.
+        await _end(send, close_reason["error"])
 
 
 async def _end(send, error: "RPCError | None") -> None:

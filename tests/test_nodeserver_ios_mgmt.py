@@ -13,7 +13,8 @@ Coverage:
 - NodeIosReleaseDevice dispatch → ack
 - NodeIosConfigureDevice dispatch → ack with applied revision
 - get_ios_devices returns the cached snapshot
-- Capability gating: ios_mgmt=false rejects iOS frames with failed_precondition
+- Capability gating: management nodes reject iOS frames; execution nodes are
+  accepted with or without the self-reported ios_mgmt label
 """
 from __future__ import annotations
 
@@ -421,13 +422,18 @@ async def test_ios_configure_device_dispatch_and_ack(db, service):
 
 
 @pytest.mark.asyncio
-async def test_ios_mgmt_capability_gating(db, service):
-    """A node without ios_mgmt=true is rejected with failed_precondition.
+async def test_ios_frames_not_gated_on_self_reported_label(db, service):
+    """回归：iOS 帧的门禁**不再**看节点自报的 ios_mgmt 标签，只看角色。
 
-    角色无关：这里用**执行节点**（而非 ios_host）证明拦截来自缺失的能力标签，
-    不是角色不符。
+    旧行为：``_require_online_ios_host`` 要求 capabilities 里有 ``ios_mgmt=true``，
+    没有就 failed_precondition。那个标签是节点**启动时**探测 usbmuxd 得到的一次性
+    结论：Apple 移动设备服务晚一步就绪，标签就整个进程生命周期缺失，于是宿主列表
+    变空、扫描弹框只剩「当前没有节点可以扫描 iOS 设备」，一台插着 iPhone 的 Windows
+    节点被一个易失的自报字段判死。
+
+    新行为：执行节点即使没报标签也可以被派发（节点自己会回「本机未启用 iOS 设备管理」
+    这种确切错误），管理节点仍然拦下——它根本没有设备栈，不该收到这些帧。
     """
-    # Onboard an execution node but register WITHOUT the capability label
     node_id, secret_b32, _ = await _onboard_approved_ios_host(
         service, ios_mgmt=False, role=pb.NodeRole.NODE_ROLE_EXECUTION
     )
@@ -436,15 +442,50 @@ async def test_ios_mgmt_capability_gating(db, service):
     handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
 
     await _register_ios_host(ch, service, node_id, secret_b32, ios_mgmt=False)
-    await ch.next_downstream()  # public_ip_lookup_config
-    await ch.next_downstream()  # node_proxy_config
-    # No auto-discover (the ios_mgmt check blocks it)
 
-    # Try to claim a device
+    # Claim reaches the node (no precondition rejection). Auto-discover stays
+    # gated on the label (a label-less node has no device manager to answer it),
+    # so drain only the unconditional config frames before asserting the claim.
+    claim_task = asyncio.create_task(
+        service.ios_claim_device(node_id, "00008030-AABBCCDDEEFF", "My iPhone", "CODE123")
+    )
+    for _ in range(3):
+        _, frame = await ch.next_downstream()
+        which = frame.WhichOneof("frame")
+        if which == "ios_claim_device":
+            break
+    else:
+        pytest.fail("claim frame never arrived")
+    assert frame.WhichOneof("frame") == "ios_claim_device", (
+        f"claim must be dispatched without the label, got {which}"
+    )
+    ack = pb.NodeUpstreamFrame()
+    ack.command_ack.CopyFrom(pb.NodeCommandAck(server_frame_id=frame.server_frame_id, ok=True))
+    ch.feed_upstream(ack)
+    result = await asyncio.wait_for(claim_task, timeout=2.0)
+    assert result["node_id"] == node_id
+
+    ch.disconnect()
+    await asyncio.wait_for(handler, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_management_node_rejected_for_ios_frames(db, service):
+    """管理节点不能承担 iOS 设备帧：角色门禁（不再是能力门禁）必须拦住它。"""
+    mgr = await service.onboard_node(
+        pb.OnboardNodeRequest(role=pb.NodeRole.NODE_ROLE_MANAGEMENT, node_name="mgr-ios")
+    )
+    node_id = mgr.node_id
+    ch = FakeNodeChannel()
+    scope = {"type": "http", "method": "POST", "path": "/x"}
+    handler = asyncio.create_task(node_connect_asgi(scope, ch.receive, ch.send, service))
+
+    await _register_ios_host(ch, service, node_id, mgr.secret, ios_mgmt=True)
+
     with pytest.raises(RPCError) as exc_info:
-        await service.ios_claim_device(node_id, "00008030-AABBCCDDEEFF", "My iPhone", "CODE123")
+        await service.ios_discover(node_id)
     assert exc_info.value.code == Code.FAILED_PRECONDITION
-    assert "does not support iOS management" in str(exc_info.value)
+    assert "management node" in str(exc_info.value)
 
     ch.disconnect()
     await asyncio.wait_for(handler, timeout=2.0)

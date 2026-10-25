@@ -293,3 +293,72 @@ async def record_message_status(session_id: str, event_type: str, payload_json: 
         logger.exception(
             "[nodeserver] message status update failed for session {}", session_id
         )
+
+
+async def sync_task_provider_thread(session_id: str, payload_json: str) -> None:
+    """Follow the runtime's reported provider thread onto the Task binding.
+
+    The gateway binds a Task's ``provider_thread_id`` on the FIRST request and
+    then enforces it strictly: every later request must carry the SAME thread or
+    it 403s ("Task API Key 与 provider 会话不匹配"). But the runtime can legitimately
+    move to a NEW thread mid-task — a resume that forks, a state dir wiped by a
+    fresh restart, or (historically) a first turn that failed before the thread
+    was persisted. The runtime reports its current ``threadId`` on every
+    ``agent_turn_completed`` frame; when that differs from the stored binding the
+    task would otherwise be wedged forever, recoverable only by an operator
+    editing the DB. This keeps the binding in lockstep with reality so the next
+    request authenticates.
+
+    Only the runtime is authoritative here: it is the sole source of the thread
+    the provider CLI actually uses. ``session_id`` maps to the Task via
+    ``node_session_id`` (same join the delivery-status machine uses). A no-op
+    when the frame carries no ``threadId`` or the thread already matches.
+
+    Best-effort and never raises — a failure here must not break event logging.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except (TypeError, ValueError):
+        return
+    if not isinstance(payload, dict):
+        return
+    thread = str(payload.get("threadId") or payload.get("thread_id") or "").strip()
+    if not thread:
+        return
+    try:
+        from .shared_store import pool
+
+        if pool() is None:
+            return
+        async with pool().acquire() as conn:
+            # The partial unique index on provider_thread_id makes a stale row
+            # that still owns this thread the one real conflict; the guard below
+            # skips the write when the binding is already correct, so a normal
+            # turn (same thread every time) is a single cheap UPDATE ... WHERE.
+            updated = await conn.fetchrow(
+                """UPDATE mc_tasks
+                      SET provider_thread_id=$2, updated_at=now()
+                    WHERE node_session_id=$1
+                      AND deleted_at IS NULL
+                      AND provider_thread_id IS DISTINCT FROM $2
+                      AND NOT EXISTS (
+                          SELECT 1 FROM mc_tasks other
+                           WHERE other.provider_thread_id=$2
+                             AND other.node_session_id IS DISTINCT FROM $1
+                      )
+                RETURNING id""",
+                session_id, thread,
+            )
+        if updated:
+            logger.info(
+                "[nodeserver] task provider thread re-synced from runtime "
+                "session={} thread={}",
+                session_id, thread,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[nodeserver] provider thread sync failed for session {}", session_id
+        )

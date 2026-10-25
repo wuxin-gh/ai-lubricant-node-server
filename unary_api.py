@@ -198,7 +198,7 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
             # the node stream, but no standalone unary request messages. Keep
             # their Connect JSON shape explicit until the proto service surface
             # is regenerated with dedicated request/response messages.
-            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "IosRunnerControl", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild", "StartHostToolJob", "GetHostToolJobStatus", "CancelHostToolJob", "RefreshNodeLabels"}:
+            if method in {"MoveNode", "ManageEditor", "SelfUpgradeNode", "RuntimeUpgradeNode", "InstallHostTool", "UpgradeNode", "GetNodeUpgradeStatus", "HostExec", "StartToolRun", "StopToolRun", "ListActiveToolRuns", "ManageNodeEnvironment", "SyncNodeEnvironment", "InspectNodeEnvironment", "InspectNodeSystemEnv", "SyncNodeSystemEnv", "ArchiveNodeSystemEnvResource", "IosDiscover", "IosClaimDevice", "IosReleaseDevice", "IosConfigureDevice", "GetIosDevices", "IosStartWdaJob", "IosCancelWdaJob", "GetIosWdaJobStatus", "IosRunnerControl", "StartNodeBuild", "GetNodeBuildStatus", "CancelNodeBuild", "StartHostToolJob", "GetHostToolJobStatus", "CancelHostToolJob", "RefreshNodeLabels"}:
                 import json
 
                 payload = json.loads((body or b"{}").decode("utf-8") or "{}")
@@ -256,6 +256,8 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                         payload.get("nodeId", ""),
                         payload.get("envId", ""),
                         payload.get("action", ""),
+                        git=payload.get("git"),
+                        target_path=payload.get("target_path", "") or "",
                     )
                 elif method == "SyncNodeEnvironment":
                     data = await service.sync_environment(
@@ -363,6 +365,9 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                         timeout_seconds=max(int(payload.get("timeoutSeconds", 0) or 0), 0),
                         artifact_name=payload.get("artifactName", ""),
                         artifact_version=payload.get("artifactVersion", ""),
+                        source_kind=payload.get("sourceKind", ""),
+                        source_subdir=payload.get("sourceSubdir", ""),
+                        source_no_proxy=bool(payload.get("sourceNoProxy", False)),
                     )
                 elif method == "GetNodeBuildStatus":
                     data = await service.get_node_build_status(
@@ -393,6 +398,8 @@ def build_unary_router(service: NodeService, *, api_token: str = "") -> APIRoute
                         payload.get("nodeId", ""),
                         payload.get("jobId", ""),
                     )
+                elif method == "GetNodeUpgradeStatus":
+                    data = await service.get_node_upgrade_status(payload.get("nodeId", ""))
                 elif method == "CancelHostToolJob":
                     data = await service.cancel_host_tool_job(
                         payload.get("nodeId", ""),

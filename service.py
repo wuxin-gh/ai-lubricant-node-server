@@ -31,6 +31,7 @@ from loguru import logger
 from . import agentcompose_v2_pb2 as pb
 from . import crypto
 from .registry import Connection, OutputSink, Registry
+from .upgrade_progress import UpgradeTracker
 from .store import (
     NODE_ROLE_EXECUTION,
     NODE_ROLE_MANAGEMENT,
@@ -319,6 +320,38 @@ def startup_from_proto(method: int) -> str:
     return _PROTO_TO_STARTUP.get(method, "")
 
 
+def wda_state_from_proto(state: int) -> str:
+    """protobuf enum int → enum NAME (the wire form downstream normalizes on).
+
+    ``pb.NodeIosDevice.wda_state`` yields the raw int (READY=3, FAILED=6…).
+    Passing the int through makes init_state_from_wda_state fall through to
+    "uninitialized", so every state — including failed and ready — renders as
+    待初始化. The name form ("IOS_WDA_STATE_FAILED") normalizes correctly.
+    Unknown/absent values degrade to UNSPECIFIED rather than raising.
+    """
+    if not state:
+        return "IOS_WDA_STATE_UNSPECIFIED"
+    try:
+        return pb.IosWdaState.Name(state)
+    except ValueError:
+        return "IOS_WDA_STATE_UNSPECIFIED"
+
+
+def connection_type_from_proto(conn_type: int) -> str:
+    """protobuf enum int → enum NAME for the device's connection type.
+
+    Same int-leak as wda_state: the raw int (1/2) reached the console verbatim
+    and rendered as "1"/"2". With LAN tunnels the field also gained meaning
+    (USB vs NETWORK), so it is worth naming properly.
+    """
+    if not conn_type:
+        return "IOS_CONNECTION_TYPE_UNSPECIFIED"
+    try:
+        return pb.IosConnectionType.Name(conn_type)
+    except ValueError:
+        return "IOS_CONNECTION_TYPE_UNSPECIFIED"
+
+
 def _public_ip_config_proto(config: PublicIPLookupConfig) -> "pb.NodePublicIPLookupConfig":
     return pb.NodePublicIPLookupConfig(
         revision=max(int(config.revision or 0), 0),
@@ -499,6 +532,11 @@ class NodeService:
         self.registry = registry
         self.secrets = crypto.SecretStore(master_key)
         self.replay = crypto.ReplayCache()
+        # Upgrade progress (runtime hot-swap + node-binary self-upgrade). Keyed
+        # by node_id on the service (NOT on the Connection): the node-binary
+        # step ends with the node replacing its own process — the stream drops
+        # exactly when the poll must stay alive.
+        self.upgrade_tracker = UpgradeTracker()
         # Release a node's TOTP claim the moment its live connection is gone, so
         # a genuine restart inside the same 30s code step can re-authenticate
         # immediately. A second concurrent process reusing the code is still
@@ -520,6 +558,13 @@ class NodeService:
 
     def _on_node_disconnect(self, node_id: str) -> None:
         self.replay.release(node_id)
+        # A disconnect while a node-binary upgrade is in flight is the expected
+        # shape of the swap restarting (the node exits its process). Display
+        # glue only; the terminal transition is the reconnect's client_version.
+        try:
+            self.upgrade_tracker.mark_restarting(node_id)
+        except Exception:  # noqa: BLE001 — tracker glue must not break teardown
+            pass
         try:
             import asyncio
 
@@ -916,6 +961,13 @@ class NodeService:
             info.active_session_ids.extend(conn.active_sessions())
             if conn.connected_at is not None:
                 info.connected_at = crypto.rfc3339nano(conn.connected_at)
+            # 心跳时间也以**当前连接**为准，与下面 online 的判定（_connection_live）
+            # 同源。否则 info.last_heartbeat_at 还是上面用台账 last_seen_at 设的值
+            # （可能很旧），而 online 是按 60s 超时算的，页面就会出现
+            # 「在线但心跳 7 小时前」这种自相矛盾。
+            _, last_hb, _ = conn.snapshot()
+            if last_hb is not None:
+                info.last_heartbeat_at = crypto.rfc3339nano(last_hb)
             info.online = _connection_live(conn)
             # Prefer the address of the CURRENTLY-LIVE connection over any value
             # persisted to labels at register time: a node connected before the
@@ -967,6 +1019,12 @@ class NodeService:
         # Authenticated: fold in self-reported name/platform/capabilities while
         # pinning role/manager/status/secret to the stored (authoritative) values.
         updated = self._refreshed_record(record, register, peer_address=peer_address)
+        # A node-binary upgrade's terminal signal: the restarted node reports
+        # the new client_version on this register. No-op unless an upgrade to
+        # this node is in flight and the version matches the pushed target.
+        self.upgrade_tracker.finalize_from_reconnect(
+            node_id, (updated.capabilities or {}).get("client_version", "")
+        )
         return await self.store.upsert_node(updated)
 
     def _refreshed_record(
@@ -1115,6 +1173,22 @@ class NodeService:
                     event.event_type or "",
                     event.payload_json or "",
                 )
+            # Keep the Task's provider-thread binding aligned with the thread the
+            # runtime actually used. A resume fork, a wiped state dir, or a failed
+            # first turn can move the runtime to a new thread; the gateway binds
+            # once and then 403s any request whose thread differs, so without this
+            # the task wedges until an operator edits the DB. The runtime reports
+            # its current thread on every completed turn, and — because a failed
+            # turn (e.g. the 403 itself) emits only input_status — on the failure
+            # path too. sync_task_provider_thread no-ops when the frame carries no
+            # thread id.
+            if (event.event_type or "") in ("agent_turn_completed", "input_status"):
+                from .task_message_status import sync_task_provider_thread
+
+                await sync_task_provider_thread(
+                    event.session_id,
+                    event.payload_json or "",
+                )
             # Runtime error frames (provider 429, upstream 5xx, agent crash) are
             # turn-level signals: the runtime process often stays up (so
             # task_finalize never fires and mc_tasks.status stays processing) yet
@@ -1186,6 +1260,11 @@ class NodeService:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("[nodeserver] host-tool result version store failed: {}", exc)
+        elif which == "node_upgrade_event":
+            # Upgrade progress: fold into the NodeService-level tracker (not a
+            # Connection snapshot — the node-binary step drops the stream on
+            # restart, and the poll must stay meaningful across that window).
+            self.upgrade_tracker.apply(node_id, frame.node_upgrade_event)
         elif which == "error":
             conn.note_error(frame.error.code, frame.error.message)
 
@@ -1884,12 +1963,19 @@ class NodeService:
             raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
         return conn
 
-    async def manage_environment(self, node_id: str, env_id: str, action: str) -> dict:
+    async def manage_environment(
+        self, node_id: str, env_id: str, action: str, git: dict | None = None,
+        target_path: str = "",
+    ) -> dict:
         """Create or remove one shared-environment directory on a connected node.
 
         CREATE is idempotent (leaves an existing env intact); REMOVE deletes the
         tree to reclaim disk. Ledger bookkeeping is the data service's job — this
         just pushes the frame and waits for the node ack.
+
+        ``git`` 非 None 时（fresh/worktree 模式），节点在 CREATE 里把仓库 clone 好——
+        分钟级操作，ack 窗口放宽到与归档安装同级（ARCHIVE_INSTALL）。``target_path``：
+        空 = clone 进环境共享检出（worktree）；非空 = clone 进该绝对路径（fresh）。
         """
         env_id = (env_id or "").strip()
         verb = (action or "").strip().lower()
@@ -1898,6 +1984,19 @@ class NodeService:
         if verb not in ("create", "remove"):
             raise RPCError(Code.INVALID_ARGUMENT, "action must be create or remove")
         conn = await self._require_online_execution(node_id)
+
+        git_spec = pb.NodeGitSpec()
+        if git and isinstance(git, dict):
+            for field in ("url", "branch", "commit", "new_branch", "username", "password", "token"):
+                value = str(git.get(field) or "").strip()
+                if value:
+                    setattr(git_spec, field, value)
+            if git.get("create_branch"):
+                git_spec.create_branch = True
+        # pre-warm clone 是分钟级的；没带 git 的 create/remove 维持原 30s。
+        ack_timeout = (
+            ARCHIVE_INSTALL_ACK_TIMEOUT if (git_spec.url and verb == "create") else ENVIRONMENT_ACK_TIMEOUT
+        )
 
         frame_id = str(uuid.uuid4())
         ack_future = conn.await_ack(frame_id)
@@ -1913,6 +2012,8 @@ class NodeService:
                     if verb == "remove"
                     else pb.EnvironmentAction.ENVIRONMENT_ACTION_CREATE
                 ),
+                git=git_spec,
+                target_path=str(target_path or "").strip(),
             )
         )
         try:
@@ -1921,7 +2022,7 @@ class NodeService:
             conn.cancel_ack(frame_id)
             raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
         try:
-            ack = await asyncio.wait_for(ack_future, timeout=ENVIRONMENT_ACK_TIMEOUT)
+            ack = await asyncio.wait_for(ack_future, timeout=ack_timeout)
         except asyncio.TimeoutError:
             conn.cancel_ack(frame_id)
             raise RPCError(
@@ -2175,9 +2276,10 @@ class NodeService:
 
     # ── iOS device management (role ios_host) ───────────────────────────────────
     # Discovery, claim, release, configure, and WDA job dispatch for iOS control
-    # nodes. A node must have role=ios_host, be online, and carry the ios_mgmt=true
-    # capability label. Claim/release/configure wait for an ack; WDA job dispatch
-    # returns immediately (the job result is tracked separately in Stage 3).
+    # nodes. A node must be online and must not be a management node — the gate is
+    # reachability + role, NOT the self-reported ios_mgmt capability label (see
+    # _require_online_ios_host). Claim/release/configure wait for an ack; WDA job
+    # dispatch returns immediately (the job result is tracked separately in Stage 3).
 
     IOS_CLAIM_ACK_TIMEOUT = 30.0  # claim → pair → device-control WS register
     IOS_RELEASE_ACK_TIMEOUT = 10.0  # tear down goroutine + optional credential delete
@@ -2186,13 +2288,14 @@ class NodeService:
     IOS_RUNNER_CONTROL_ACK_TIMEOUT = 30.0  # start/stop/restart the persistent runner loop
 
     async def _require_online_ios_host(self, node_id: str) -> Connection:
-        """Guard: node must be online and carry ios_mgmt=true.
+        """Guard: node must be online (and not a management-only node).
 
-        Gated on the *capability*, not the role: iOS device management is a
-        host capability (go-ios + usbmuxd), so any node that advertises it can
-        serve these frames — notably an execution node on a Mac/Windows box
-        with an iPhone attached. The separate ``node-ios`` binary still
-        advertises it via ``role=ios_host``; both shapes pass here.
+        Gated on reachability, NOT on the self-reported ``ios_mgmt`` label: that
+        label is a boot-time usbmuxd probe whose negative result is sticky for
+        the node's process lifetime, so one unlucky register strands a working
+        host behind a silent "no iOS hosts" UI. A node that genuinely lacks the
+        iOS stack error-acks these frames with "iOS device management is not
+        enabled on this host" — a real, specific error beats a hidden host.
         """
         node_id = (node_id or "").strip()
         if not node_id:
@@ -2203,12 +2306,11 @@ class NodeService:
         conn = self.registry.lookup(node_id)
         if conn is None:
             raise RPCError(Code.FAILED_PRECONDITION, f"node {node_id} is offline")
-        caps = record.capabilities or {}
-        if caps.get("ios_mgmt") != "true":
+        role = (record.role or "").strip().lower()
+        if role in ("management", "passive_management"):
             raise RPCError(
                 Code.FAILED_PRECONDITION,
-                f"node {node_id} does not support iOS management "
-                "(upgrade the node program, or start it with --ios auto where usbmuxd is available)",
+                f"node {node_id} is a management node and cannot serve iOS device frames",
             )
         return conn
 
@@ -2419,7 +2521,7 @@ class NodeService:
                     "name": dev.name,
                     "model": dev.model,
                     "product_version": dev.product_version,
-                    "connection_type": dev.connection_type,
+                    "connection_type": connection_type_from_proto(dev.connection_type),
                     "present": dev.present,
                     "claimed": dev.claimed,
                     "device_id": dev.device_id,
@@ -2428,7 +2530,13 @@ class NodeService:
                     # source of "initializing N%" — the device carries them on
                     # every report, so a server restart no longer drops them
                     # (the volatile job snapshot does).
-                    "wda_state": dev.wda_state,
+                    # wda_state is a protobuf enum: field access yields the raw
+                    # INT (READY=3, FAILED=6…). Downstream normalization
+                    # (init_state_from_wda_state) matches on the NAME — an int
+                    # falls through to "uninitialized", making every state
+                    # (including failed/ready) render as 待初始化. Serialize the
+                    # enum name.
+                    "wda_state": wda_state_from_proto(dev.wda_state),
                     "wda_progress": dev.wda_progress,
                     "wda_stage": dev.wda_stage,
                     "wda_bundle_id": dev.wda_bundle_id,
@@ -2615,6 +2723,9 @@ class NodeService:
         timeout_seconds: int = 0,
         artifact_name: str = "",
         artifact_version: str = "",
+        source_kind: str = "",
+        source_subdir: str = "",
+        source_no_proxy: bool = False,
     ) -> dict:
         """Dispatch a build job to a node that mounts the build runner.
 
@@ -2657,6 +2768,9 @@ class NodeService:
                 timeout_seconds=int(timeout_seconds or 0),
                 artifact_name=artifact_name,
                 artifact_version=artifact_version,
+                source_kind=source_kind,
+                source_subdir=source_subdir,
+                source_no_proxy=bool(source_no_proxy),
             )
         )
 
@@ -2893,6 +3007,9 @@ class NodeService:
 
         frame_id = str(uuid.uuid4())
         ack_future = conn.await_ack(frame_id)
+        # Init the progress snapshot BEFORE send so a fast event can never race
+        # it (same ordering rule as the host-tool/build dispatches).
+        self.upgrade_tracker.init(node_id, "runtime", target_version, frame_id)
         frame = pb.NodeDownstreamFrame(
             server_frame_id=frame_id,
             created_at=crypto.rfc3339nano(crypto.utc_now()),
@@ -2911,6 +3028,7 @@ class NodeService:
             conn.send(frame)
         except Exception as exc:  # noqa: BLE001
             conn.cancel_ack(frame_id)
+            self.upgrade_tracker.finalize_from_ack(node_id, "runtime", ok=False, error=f"send to node failed: {exc}")
             raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
         try:
             # Runtime replacement is hot (no Go restart) but the node acks only
@@ -2920,13 +3038,35 @@ class NodeService:
             ack = await asyncio.wait_for(ack_future, timeout=ARCHIVE_INSTALL_ACK_TIMEOUT)
         except TimeoutError as exc:
             conn.cancel_ack(frame_id)
+            # Non-terminal: the node-side goroutine survives the stream ctx
+            # detach, so late events (and even a late "done") still fold into
+            # the snapshot the console is polling.
+            self.upgrade_tracker.note_ack_timeout(
+                node_id, "runtime",
+                f"ack 超时（{int(ARCHIVE_INSTALL_ACK_TIMEOUT)}s），节点可能仍在下载归档，进度继续更新中",
+            )
             raise RPCError(
                 Code.DEADLINE_EXCEEDED,
                 f"runtime upgrade ack timed out after {int(ARCHIVE_INSTALL_ACK_TIMEOUT)}s; "
                 "the node may still be downloading the archive",
             ) from exc
+        except ConnectionError as exc:
+            # The ack future fails fast on disconnect (registry.close). The
+            # detached node goroutine keeps going and re-acks nothing, but its
+            # progress events flow on the next stream — keep the snapshot alive
+            # for the poller instead of lying that the upgrade died.
+            conn.cancel_ack(frame_id)
+            self.upgrade_tracker.note_ack_timeout(
+                node_id, "runtime", "连接中断，等待节点回报（升级可能仍在后台进行）"
+            )
+            raise RPCError(
+                Code.UNAVAILABLE,
+                f"runtime upgrade: node connection dropped mid-upgrade: {exc}",
+            ) from exc
         if not ack.ok:
+            self.upgrade_tracker.finalize_from_ack(node_id, "runtime", ok=False, error=ack.error or "")
             raise RPCError(Code.INTERNAL, ack.error or "runtime upgrade failed")
+        self.upgrade_tracker.finalize_from_ack(node_id, "runtime", ok=True)
         await self._store_runtime_version(node_id, target_version)
         return {
             "node_id": node_id,
@@ -3051,6 +3191,11 @@ class NodeService:
 
         frame_id = str(uuid.uuid4())
         ack_future = conn.await_ack(frame_id)
+        # Init the progress snapshot BEFORE send (same ordering rule as the
+        # runtime step). The node step's terminal truth is the reconnect's
+        # client_version (finalize_from_reconnect) or a "failed" event — the
+        # ack here only means "accepted".
+        self.upgrade_tracker.init(node_id, "node", target_version, frame_id)
         frame = pb.NodeDownstreamFrame(
             server_frame_id=frame_id,
             created_at=crypto.rfc3339nano(crypto.utc_now()),
@@ -3069,25 +3214,62 @@ class NodeService:
             conn.send(frame)
         except Exception as exc:  # noqa: BLE001
             conn.cancel_ack(frame_id)
+            self.upgrade_tracker.finalize_from_ack(node_id, "node", ok=False, error=f"send to node failed: {exc}")
             raise RPCError(Code.UNAVAILABLE, f"send to node {node_id} failed: {exc}")
         try:
             ack = await asyncio.wait_for(ack_future, timeout=SELF_UPGRADE_ACK_TIMEOUT)
         except asyncio.TimeoutError:
             conn.cancel_ack(frame_id)
+            # Non-terminal on purpose: the node may have accepted and be
+            # mid-download with the ack frame lost; events/reconnect still
+            # terminalize the snapshot.
+            self.upgrade_tracker.note_ack_timeout(
+                node_id, "node",
+                f"受理 ack 超时（{int(SELF_UPGRADE_ACK_TIMEOUT)}s），节点可能已在下载，进度继续更新中",
+            )
             raise RPCError(
                 Code.DEADLINE_EXCEEDED,
                 f"node {node_id} did not accept the upgrade within "
                 f"{int(SELF_UPGRADE_ACK_TIMEOUT)}s",
             )
+        except ConnectionError as exc:
+            conn.cancel_ack(frame_id)
+            self.upgrade_tracker.note_ack_timeout(
+                node_id, "node", "连接中断，等待节点回报（升级可能仍在后台进行）"
+            )
+            raise RPCError(
+                Code.UNAVAILABLE,
+                f"self-upgrade on {node_id}: node connection dropped: {exc}",
+            ) from exc
         if ack is None or not ack.ok:
             message = (getattr(ack, "error", "") or "").strip() or "node reported failure"
+            self.upgrade_tracker.finalize_from_ack(node_id, "node", ok=False, error=message)
             raise RPCError(Code.INTERNAL, f"self-upgrade on {node_id} failed: {message}")
+        # Accepted, not done: keep the step non-terminal until the node
+        # restarts and re-registers with the new client_version.
+        self.upgrade_tracker.finalize_from_ack(node_id, "node", ok=True)
         return {
             "node_id": node_id,
             "target_version": target_version,
             "download_url": download_url,
             "accepted": True,
         }
+
+    async def get_node_upgrade_status(self, node_id: str) -> dict:
+        """Polling endpoint for upgrade progress (runtime + node steps).
+
+        Deliberately NO online check: the node-binary step restarts the node,
+        so the restart window is exactly when the console must still be able
+        to read the snapshot. NOT_FOUND only when this node has never run an
+        upgrade since the control plane started (snapshots are in-memory).
+        """
+        node_id = (node_id or "").strip()
+        if not node_id:
+            raise RPCError(Code.INVALID_ARGUMENT, "node_id is required")
+        snapshot = self.upgrade_tracker.get(node_id)
+        if snapshot is None:
+            raise RPCError(Code.NOT_FOUND, f"no upgrade progress for node {node_id}")
+        return snapshot
 
     async def revoke_onboard_node(self, req: "pb.RevokeOnboardNodeRequest") -> "pb.RevokeOnboardNodeResponse":
         node_id = (req.node_id or "").strip()

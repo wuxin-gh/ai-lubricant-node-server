@@ -20,23 +20,28 @@ the proxy reads it in ``_resolve``. A node-supplied list is never trusted.
 Submodule paths are fetch-only — pushes are accepted for the main repo path
 only.
 
-The node therefore never holds a real git credential. The token is scoped to a
-single task and is revoked the moment the task leaves an active state:
-``pending``/``processing``/``error`` only — a finished/stopped/deleted task
-yields 403, so a token left behind in ``.git/config`` is useless once the task
-ends.
+The node therefore never holds a real git credential. The token's id names
+either a Task or an Environment, and the credential is revoked by *state*: a
+task that left an active status (``pending``/``processing``/``error`` only), or
+an environment that was disabled or deleted, yields 403 on the next request. A
+token left behind in ``.git/config`` is therefore useless once its principal
+ends — and re-enabling an environment restores the same token without reissue.
 
-Token format (keep in sync with ``monkeycode_compat.task_service``
+Token format (keep in sync with ``user_platform.task_service``
 ``_git_proxy_token``):
 
     sig   = HMAC-SHA256(key=node_control_token,
-                        msg="git-proxy:{task_id}:{scope}:{mode}").hexdigest()[:32]
-    token = f"{task_id}.{scope}.{mode}.{sig}"
+                        msg="git-proxy:{id}:{scope}:{mode}").hexdigest()[:32]
+    token = f"{id}.{scope}.{mode}.{sig}"
 
-``scope`` is ``main`` for the task's own repository, or an associated project's
-UUID for a dependency clone (project association feature). ``mode`` is ``ro``
-(fetch only) or ``rw`` (fetch + push). Because the signature covers scope and
-mode, a node cannot promote its own token to ``rw`` or point it at an
+``id`` is a Task id (per-task credential) or an Environment id (per-environment
+credential, for a checkout that outlives any single task). Both are UUIDs from
+disjoint tables, so the id itself selects the resolution path.
+
+``scope`` is ``main`` for the principal's own repository, or an associated
+project's UUID for a dependency clone (project association feature). ``mode`` is
+``ro`` (fetch only) or ``rw`` (fetch + push). Because the signature covers scope
+and mode, a node cannot promote its own token to ``rw`` or point it at an
 unassociated repository — both edits break the HMAC.
 """
 from __future__ import annotations
@@ -170,6 +175,25 @@ def _parse_submodule_paths(snapshot: Any) -> list[str]:
     return [p for p in paths if p]
 
 
+def _parse_path_list(value: Any) -> list[str]:
+    """Read a dedicated ``submodule_paths`` column (a bare list).
+
+    Distinct from :func:`_parse_submodule_paths`, which digs the list out of the
+    task's ``config_snapshot`` bag. An environment stores the paths in their own
+    column, so the value IS the list — but a driver may still hand it back as a
+    JSON string, and the same tolerance applies.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value else None
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(value, list):
+        return []
+    paths = [str(item).strip() for item in value if isinstance(item, (str, bytes))]
+    return [p for p in paths if p]
+
+
 # A ``/git/r/<repo-path>/<git-suffix>`` request: git resolves a relative
 # ``.gitmodules`` url against the main clone URL (which now ends in
 # ``/git/r/<parent-path>``), so a sibling submodule ``../x.git`` lands at
@@ -221,7 +245,34 @@ def _auth_header(username: str | None, access_token: str | None) -> str | None:
     return "Basic " + base64.b64encode(credential.encode("utf-8")).decode("ascii")
 
 
-async def _resolve(task_id: str, scope: str) -> _GitTarget:
+async def _resolve(principal_id: str, scope: str) -> _GitTarget:
+    """Resolve a proxy token's id to repo + git identity → upstream token.
+
+    The id names either a Task (the original per-task credential) or an
+    Environment (a per-environment credential, so one long-lived checkout keeps
+    working across every task that runs on it). UUIDs do not collide across the
+    two tables, so which table holds this id decides the whole resolution path;
+    the task table is probed first because that is the historic shape.
+
+    Either way the credential is revoked by *state*, never by expiry: a task
+    that left an active status, or an environment that was disabled or deleted,
+    is a 403 on the next request. Nothing has to be invalidated when that
+    happens, and re-enabling an environment restores access to the same token.
+    """
+    from .shared_store import pool
+
+    if pool() is None:
+        raise _GitProxyError(503, "git proxy: control-plane database unavailable")
+
+    principal_uuid = uuid.UUID(principal_id)
+    async with pool().acquire() as conn:
+        known_task = await conn.fetchrow("SELECT 1 FROM mc_tasks WHERE id=$1", principal_uuid)
+    if known_task is None:
+        return await _resolve_environment(principal_uuid, scope)
+    return await _resolve_task(principal_id, scope)
+
+
+async def _resolve_task(task_id: str, scope: str) -> _GitTarget:
     """Resolve task (+ scope) → repo + git identity → upstream access token.
 
     Only active tasks resolve; anything else is a 403 (revocation). The real
@@ -320,6 +371,90 @@ async def _resolve(task_id: str, scope: str) -> _GitTarget:
         username=username,
         access_token=access_token,
         submodule_paths=submodule_paths,
+    )
+
+
+async def _resolve_environment(env_id: uuid.UUID, scope: str) -> _GitTarget:
+    """Resolve an environment token → its project's repo + git identity.
+
+    This is the credential an environment's long-lived checkout uses. The row is
+    the lifecycle gate: a disabled or deleted environment is a 403 on the next
+    request, and re-enabling restores the SAME token — nothing is reissued and
+    nothing needs invalidating, because every request re-reads this row.
+
+    The repository comes from the environment's bound project, not from a task,
+    which is what lets one checkout serve every task that runs on it. The
+    submodule allowlist is stored on the environment (derived from the project's
+    ``.gitmodules`` at bind time) rather than on a task's config snapshot.
+    """
+    from .shared_store import pool
+
+    if pool() is None:
+        raise _GitProxyError(503, "git proxy: control-plane database unavailable")
+
+    async with pool().acquire() as conn:
+        env = await conn.fetchrow(
+            "SELECT enabled, project_id, submodule_paths FROM mc_task_environments WHERE id=$1",
+            env_id,
+        )
+        if env is None:
+            raise _GitProxyError(403, "git proxy: environment does not exist")
+        if not env["enabled"]:
+            # The named cause matters: "environment is disabled" tells the
+            # operator exactly which switch to flip, where a bare 403 would
+            # send them looking at the token.
+            raise _GitProxyError(403, "git proxy: environment is disabled")
+        project_id = env["project_id"]
+        if project_id is None:
+            raise _GitProxyError(404, "git proxy: environment has no bound project")
+
+        project = await conn.fetchrow(
+            "SELECT repo_url, git_identity_id FROM mc_projects WHERE id=$1", project_id
+        )
+        if project is None or not project["repo_url"]:
+            raise _GitProxyError(404, "git proxy: environment's project has no repository")
+
+        repo_url = str(project["repo_url"])
+        if scope != _SCOPE_MAIN:
+            # Associated repository, reached through the environment's project.
+            # Same rule as the task path: the association must originate from
+            # this project, so a signed token cannot be pointed anywhere else.
+            try:
+                target_uuid = uuid.UUID(scope)
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise _GitProxyError(403, "git proxy: malformed association scope") from exc
+            assoc = await conn.fetchrow(
+                "SELECT 1 FROM mc_project_associations "
+                "WHERE source_project_id=$1 AND target_project_id=$2",
+                project_id,
+                target_uuid,
+            )
+            if assoc is None:
+                raise _GitProxyError(403, "git proxy: project is not associated with this environment")
+            target_project = await conn.fetchrow(
+                "SELECT repo_url FROM mc_projects WHERE id=$1", target_uuid
+            )
+            if target_project is None or not target_project["repo_url"]:
+                raise _GitProxyError(404, "git proxy: associated project has no repository")
+            repo_url = str(target_project["repo_url"])
+
+        identity_id = project["git_identity_id"]
+        username: str | None = None
+        access_token: str | None = None
+        if identity_id is not None:
+            identity = await conn.fetchrow(
+                "SELECT username, access_token FROM mc_git_identities WHERE id=$1",
+                identity_id,
+            )
+            if identity is not None:
+                username = identity["username"]
+                access_token = identity["access_token"]
+
+    return _GitTarget(
+        repo_url=repo_url,
+        username=username,
+        access_token=access_token,
+        submodule_paths=_parse_path_list(env["submodule_paths"]),
     )
 
 

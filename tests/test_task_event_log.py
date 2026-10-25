@@ -429,3 +429,47 @@ async def test_clickhouse_failure_falls_back_to_the_postgres_payload(monkeypatch
     assert payload["logical_event_id"] == "m1"
     assert payload["agent_id"] == "agent-root"
     assert payload["item"]["text"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_bare_error_frame_is_synthesized_into_a_replayable_item(monkeypatch):
+    """A failed turn reaches the node as a bare ``{type:"error", message, …}```
+    frame (no ``item`` wrapper). Without synthesis the failure is dropped and a
+    refresh loses the error card. The writer must turn it into an ``error`` item
+    so it persists and the client can offer retry."""
+    conn, ch = _install(monkeypatch, {"id": "task-1"})
+
+    await record_session_event(
+        "session-1", seq=1, event_type="error", item_type="",
+        agent_id="", payload_json=json.dumps({
+            "v": 1, "seq": 1, "type": "error",
+            "code": "runtime_stream_error",
+            "message": "API Error: 400 context length exceeded",
+            "message_id": "u-123",
+        }),
+    )
+
+    assert len(ch.rows) == 1
+    # item_json 存的是信封（item + 路由字段），真正的 item 嵌在下面。
+    item = ch.item(0)["item"]
+    assert item["type"] == "error"
+    assert item["text"] == "API Error: 400 context length exceeded"
+    # id 前缀避免与失败的 user_input 行同 id（replay 按 id 合并，会顶掉用户气泡）。
+    assert item["id"] == "error:u-123"
+    # PG 索引行也写了（刷新后能从 mc_task_events 读到这条）。
+    assert len(conn.inserts()) == 1
+
+
+@pytest.mark.asyncio
+async def test_bare_error_frame_without_text_is_still_dropped(monkeypatch):
+    """An error frame with no message/detail yields nothing to show; skip it
+    rather than persist an empty card."""
+    conn, ch = _install(monkeypatch, {"id": "task-1"})
+
+    await record_session_event(
+        "session-1", seq=1, event_type="error", item_type="",
+        agent_id="", payload_json=json.dumps({"v": 1, "seq": 1, "type": "error"}),
+    )
+
+    assert ch.rows == []
+    assert conn.executes == []

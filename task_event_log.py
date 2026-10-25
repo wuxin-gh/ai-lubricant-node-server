@@ -63,6 +63,42 @@ def _item_of(payload: object) -> dict | None:
     return None
 
 
+def _synthesize_error_item(payload: object, event_type: str) -> dict | None:
+    """Reconstruct a conversation ``error`` item from a bare runtime error frame.
+
+    A failed turn reaches the node as a bare ``{type:"error", code, message, …}``
+    frame (the runtime stream layer turns the runner's thrown failure into it,
+    NOT an ``item``-wrapped frame). Without this, ``_item_of`` returns None and
+    the failure is silently dropped — the client then rebuilds the conversation
+    from history on refresh and the error card is gone (issue: "刷新后异常卡片
+    丢了，也没有重试按钮"). Synthesize the item so the failure is replayable and
+    the renderer can offer retry.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if str(event_type or "").lower() != "error" and str(payload.get("type") or "").lower() != "error":
+        return None
+    err = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    text = (
+        str(payload.get("message") or "").strip()
+        or str(err.get("message") or "").strip()
+        or str(payload.get("detail") or "").strip()
+    )
+    if not text:
+        return None
+    message_id = str(payload.get("message_id") or payload.get("messageId") or "").strip()
+    item: dict = {"type": "error", "text": text}
+    if message_id:
+        # Prefix so the error's logical id never collides with the failed
+        # ``user_input`` row it references — replay merges items by id, and a
+        # shared id would replace the user's own bubble with the error card.
+        item["id"] = f"error:{message_id}"
+    code = payload.get("code") or err.get("code")
+    if code is not None:
+        item["code"] = code
+    return item
+
+
 def _envelope_json(
     item: dict,
     *,
@@ -149,7 +185,12 @@ async def record_session_event(
             return
         item = _item_of(payload)
         if item is None:
-            return
+            # A failed turn arrives as a bare ``error`` frame (no item wrapper).
+            # Synthesize one so the error is persisted and replayable — otherwise
+            # a refresh loses the error card and its retry button.
+            item = _synthesize_error_item(payload, event_type)
+            if item is None:
+                return
         resolved_type = str(item.get("type") or item_type or "").strip()
         if resolved_type not in _REPLAYABLE_ITEM_TYPES:
             return

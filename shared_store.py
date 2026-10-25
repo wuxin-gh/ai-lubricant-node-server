@@ -35,6 +35,7 @@ tables, same columns) so both processes agree on one database.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -64,8 +65,24 @@ async def init(database_url: str) -> None:
     parts = urlsplit(database_url)
     if parts.scheme in ("asyncpg", "postgres+asyncpg"):
         database_url = urlunsplit(("postgresql",) + parts[1:])
+    # max_inactive_connection_lifetime：突发涨上去、闲置超过该时长的连接回收回
+    # min_size 地板（node_server 几乎无并发，经常整池闲着）。application_name：让
+    # pg_stat_activity 能区分控制面与主服务的连接。不 import 数据服务的
+    # bootstrap_config —— 本模块刻意与主服务代码零依赖，env 就地解析。
     try:
-        _pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5)
+        idle_lifetime = float(int(os.getenv("POSTGRES_POOL_MAX_IDLE_SECONDS", "300")))
+    except ValueError:
+        idle_lifetime = 300.0
+    if idle_lifetime <= 0:
+        idle_lifetime = 0.0
+    try:
+        _pool = await asyncpg.create_pool(
+            database_url,
+            min_size=1,
+            max_size=5,
+            max_inactive_connection_lifetime=idle_lifetime,
+            server_settings={"application_name": os.getenv("PG_APP_NAME") or "ai-lubricant-node"},
+        )
         logger.info("[nodeserver] shared postgres pool ready")
     except Exception:  # noqa: BLE001
         logger.exception("[nodeserver] shared postgres pool init failed")
@@ -183,6 +200,8 @@ async def resolve_proxy_fields(proxy_config_id: str) -> dict:
     raw_mode = str(entry.get("mode") or "").strip().lower()
     if raw_mode == "node":
         raise ProxyResolveError("节点隧道代理不能用于节点自身下载，请选择网络代理或 URL 前缀代理")
+    if raw_mode == "browser":
+        raise ProxyResolveError("浏览器代理出口不能用于节点自身下载，请选择网络代理或 URL 前缀代理")
     mode = _entry_mode(entry)
     if mode == _MODE_DIRECT:
         return {}

@@ -1413,6 +1413,12 @@ message NodeUpstreamFrame {
     // freshly probed value so the server folds it into capabilities without
     // waiting for a node re-register.
     NodeHostToolJobResult host_tool_job_result = 23;
+    // ─── Node upgrade progress (runtime hot-swap + binary self-upgrade) ──────
+    // Streamed progress of one upgrade step, correlated by the driving
+    // downstream frame's server_frame_id (the node echoes it in every event).
+    // kind distinguishes the two sequential steps of a unified upgrade
+    // ("runtime" then "node"). seq is monotonic per step.
+    NodeUpgradeEvent node_upgrade_event = 24;
   }
 }
 
@@ -1690,6 +1696,14 @@ enum EnvironmentAction {
 message NodeManageEnvironment {
   string env_id = 1;
   EnvironmentAction action = 2;
+  // Git identity used to clone at CREATE time (fresh / worktree modes). Empty
+  // for external mode (operator's own checkout; no clone).
+  NodeGitSpec git = 3;
+  // Clone target, absolute path on the node. Empty = clone into the environment's
+  // shared checkout (worktree mode, envRepoDir) so tasks cut per-task worktrees
+  // from it; non-empty = clone into this directory (fresh mode, the operator's
+  // chosen external_path). Ignored when git is unset.
+  string target_path = 4;
 }
 
 // Server -> node: make a shared environment's installed skill/plugin set match
@@ -1857,6 +1871,45 @@ message NodeRuntimeUpgrade {
   string proxy_mode = 4;
   string proxy_url = 5;
   string proxy_url_prefix = 6;
+}
+
+// Node -> server: one progress step of a runtime/node upgrade, correlated by
+// the server_frame_id of the driving NodeRuntimeUpgrade/NodeSelfUpgrade frame
+// (the node echoes it so a reconnecting server can attribute late events).
+// kind ∈ {"runtime", "node"}. seq is monotonic per step. current/total_bytes are
+// set during the downloading stage so the UI can show "69 MB / 188 MB"; 0/0 when
+// the stage has no denominator.
+//
+// Stage vocabulary (Go emits these verbatim; Python treats only done|failed as
+// terminal; the frontend maps the rest to display labels):
+//
+//   kind=runtime                       kind=node
+//   ----------------------------------------------------------------
+//   dispatched   server-side init      dispatched   server-side init
+//   downloading  fetching archive      downloading  fetching binary
+//   verifying    sha256 check          verifying    sha256 check
+//   extracting   untar to staging      (—)
+//   activating   atomic swap+marker    (—)
+//   done         ack (terminal)        (—)          (node would die before sending)
+//   swapping                            swapping     rename new binary into place
+//   restarting                          restarting  emitted before re-exec/restart
+//   failed       error path (terminal)  failed       error path (terminal)
+//
+// The runtime step's terminal truth is its ack (sent after activation); the
+// node step's terminal truth is the reconnect reporting the new client_version
+// — a "done" event for the node step is never sent because the process is
+// replaced. server_frame_id lets the server reject events from a stale step.
+message NodeUpgradeEvent {
+  string server_frame_id = 1;  // echoes the driving downstream frame's id
+  string kind = 2;             // "runtime" | "node"
+  int64 seq = 3;               // monotonic per step
+  string stage = 4;            // dispatched|downloading|verifying|extracting|
+                               // activating|swapping|restarting|done|failed
+  string message = 5;
+  int32 percent = 6;           // 0-100 where estimable, else 0
+  int64 current_bytes = 7;     // download progress numerator
+  int64 total_bytes = 8;       // download progress denominator
+  string reported_at = 9;      // RFC3339
 }
 
 // Server -> node: install a host-level runtime dependency (currently Node.js).
@@ -3218,6 +3271,14 @@ enum IosWdaState {
   IOS_WDA_STATE_EXPIRED = 5;
   // The last WDA job or launch attempt failed; last_error carries why.
   IOS_WDA_STATE_FAILED = 6;
+  // Initialization complete: a signed runner is installed and lockdown-level
+  // operations (list/install/uninstall) work, but the control link is not up
+  // yet. This is the terminal state of the initialization axis — it never rolls
+  // back to MISSING/UNSPECIFIED unless the runner is removed. Control readiness
+  // is a separate axis: INSTALLED ⇄ READY follows `device_control_online`
+  // (the runner link being connected means testmanagerd + forward + health are
+  // all live), so a runner crash demotes READY→INSTALLED, never →uninitialized.
+  IOS_WDA_STATE_INSTALLED = 7;
 }
 
 // One physically discovered iPhone as the host sees it. Everything here is
@@ -3499,8 +3560,8 @@ message NodeBuildRequest {
   string build_id = 1;
   // Recipe identity for logging/UI only; the node does not interpret it.
   string recipe_kind = 2;                  // "xcode_wda", "docker_image", …
-  string source_url = 3;                    // git URL, pinned by source_ref
-  string source_ref = 4;                    // commit SHA or tag
+  string source_url = 3;                    // git URL (git kind) or archive URL (archive kind)
+  string source_ref = 4;                    // commit SHA or tag (git kind only)
   // Ordered shell commands executed in the workspace root. The node does not
   // parse them — each runs via the platform shell, output is captured (bounded)
   // and streamed as NodeBuildEvent.
@@ -3517,6 +3578,23 @@ message NodeBuildRequest {
   int64 timeout_seconds = 9;
   string artifact_name = 10;
   string artifact_version = 11;
+  // How to obtain the source. Empty or "git" = clone source_url at source_ref
+  // (the historic behaviour). "archive" = download source_url as a tar.gz/zip
+  // and extract it — no git, no source_ref. Lets a build point at a plain
+  // tarball (a GitHub codeload archive, a release asset, any http(s) URL),
+  // routed through the node's egress proxy like every other download.
+  string source_kind = 12;
+  // archive kind only: subdirectory of the extracted tree to use as the
+  // workspace root (for archives whose buildable app lives under a monorepo
+  // subpath). Empty = the extracted root. The single wrapping directory that
+  // tar.gz archives carry is always stripped first, so this is relative to the
+  // project root, not the wrapper.
+  string source_subdir = 13;
+  // Fetch the source WITHOUT the node's egress proxy, even when one is bound.
+  // For internal sources (a LAN gitea/gitlab a github mirror would mangle into
+  // a broken prefixed URL). Default false = honor the proxy (historic
+  // behaviour). The artifact upload is always direct regardless of this flag.
+  bool source_no_proxy = 14;
 }
 
 // Server -> node: cancel a running build at the next stage boundary.

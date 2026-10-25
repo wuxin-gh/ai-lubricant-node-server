@@ -187,3 +187,50 @@ def test_error_message_id_is_empty_when_json_is_not_an_object():
     # non-dict payloads before reaching .get().
     assert error_message_id_from_payload(json.dumps([1, 2, 3])) == ""
     assert error_message_id_from_payload(json.dumps("x")) == ""
+
+
+@pytest.mark.asyncio
+async def test_sync_task_provider_thread_writes_new_thread(monkeypatch):
+    from node_server.task_message_status import sync_task_provider_thread
+
+    conn = _Conn()
+    pool = _Pool(conn)
+    monkeypatch.setattr(shared_store, "pool", lambda: pool)
+
+    await sync_task_provider_thread(
+        "session-1",
+        json.dumps({"threadId": "thread-new", "status": "completed"}),
+    )
+
+    assert len(conn.calls) == 1
+    sql, args = conn.calls[0]
+    assert "UPDATE mc_tasks" in sql
+    assert "provider_thread_id" in sql
+    assert args == ("session-1", "thread-new")
+
+
+@pytest.mark.asyncio
+async def test_sync_task_provider_thread_noop_without_thread(monkeypatch):
+    from node_server.task_message_status import sync_task_provider_thread
+
+    conn = _Conn()
+    monkeypatch.setattr(shared_store, "pool", lambda: _Pool(conn))
+
+    # No threadId on the frame (e.g. a cancelled turn) → no write.
+    await sync_task_provider_thread("session-1", json.dumps({"status": "cancelled"}))
+    assert conn.calls == []
+
+    # A malformed payload must not raise (best-effort).
+    await sync_task_provider_thread("session-1", "not json")
+    assert conn.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sync_task_provider_thread_accepts_snake_case(monkeypatch):
+    from node_server.task_message_status import sync_task_provider_thread
+
+    conn = _Conn()
+    monkeypatch.setattr(shared_store, "pool", lambda: _Pool(conn))
+
+    await sync_task_provider_thread("session-1", json.dumps({"thread_id": "thread-snake"}))
+    assert conn.calls[0][1] == ("session-1", "thread-snake")

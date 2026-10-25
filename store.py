@@ -263,6 +263,31 @@ class ACNodeSession(Model):
     model = fields.CharField(max_length=128, default="")
     mode = fields.CharField(max_length=64, default="")
     status = fields.CharField(max_length=32, default="")
+    # Which environment this session ran in. Empty for sessions predating the
+    # field (and for editor sessions that never went through an environment).
+    # The environment detail page lists sessions by this column.
+    env_id = fields.CharField(max_length=128, default="")
+    # Editor-native title (last user prompt / provider's own title), written by
+    # the DATA service's environment reconcile — the control plane never sets
+    # it. Overridable per row by platform_name (user rename), which this
+    # service also never touches: both are display-only for that page.
+    title = fields.CharField(max_length=512, default="")
+    platform_name = fields.CharField(max_length=512, default="")
+    # When the session last talked on the node (last entry in the editor's own
+    # records), written by the DATA service's environment reconcile. Distinct
+    # from updated_at, which is when the LEDGER ROW was touched (dispatch and
+    # reconcile both write it) — the session list shows this one.
+    last_activity_at = fields.DatetimeField(null=True)
+    # 会话思考等级（low/medium/high/xhigh），由数据面 environment reconcile 从节点
+    # 会话记录里读出来写入；控制面从不碰它。与 title/platform_name 同口径——几十字节，
+    # 进模型不会拖累控制面的会话列表。
+    effort = fields.CharField(max_length=16, default="")
+    # 会话历史的显示副本（transcript）**故意不在这里声明**。它由数据服务的
+    # ``_ensure_node_session_ledger_columns`` 建列、由环境的导入接口写入，控制面
+    # 既不读也不写。与 title/platform_name 不同，那两列是几十字节的字符串，而
+    # transcript 可能到几 MB：Tortoise 会把模型声明的每个字段都 SELECT 出来，
+    # ``list_node_sessions`` / ``count_node_sessions`` 遍历会话行时就会被这份副本
+    # 拖垮内存。表若被重建，数据服务下次启动会再把这列 ADD 回来（IF NOT EXISTS）。
     applied_revision = fields.BigIntField(default=0)
     effective_revision = fields.BigIntField(default=0)
     created_at = fields.DatetimeField(auto_now_add=True)
@@ -270,7 +295,7 @@ class ACNodeSession(Model):
 
     class Meta:
         table = "mc_ac_node_sessions"
-        indexes = (("node_id",), ("project_id",), ("task_id",))
+        indexes = (("node_id",), ("project_id",), ("task_id",), ("env_id",))
 
 
 # ── Plain-data views (decoupled from the ORM row, mirror the Go structs) ────────
